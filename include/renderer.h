@@ -2,7 +2,10 @@
 
 typedef struct Renderer_T *Renderer;
 
-void createRenderer(Renderer* renderer);
+/*
+ * Should be cleaned up by destroyRenderer()
+ */
+Renderer createRenderer();
 
 void runRenderer(const Renderer renderer);
 

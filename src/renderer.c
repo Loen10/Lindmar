@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <malloc.h>
+#include <string.h>
 #include <glfw/glfw3.h>
 #include <vulkan/vulkan.h>
 
@@ -15,7 +16,7 @@ if (res != VK_SUCCESS) { \
 }
 
 struct Renderer_T {
-        GLFWwindow* window;
+        GLFWwindow *window;
         VkInstance instance;
 };
 
@@ -26,6 +27,45 @@ static void createWindow(Renderer renderer)
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
         renderer->window = glfwCreateWindow(WIDTH, HEIGHT, "Lindmar", NULL, NULL);
+}
+
+/*
+ * Debug: Should be cleaned up by caller
+ * Release: Should be cleaned up by glfwTerminate()
+ */
+static const char **getInstanceExtensions(uint32_t *count)
+{
+#ifdef NDEBUG
+        return glfwGetRequiredInstanceExtensions(count);
+#else
+        uint32_t glfwExtensionCount = 0;
+        const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+        *count = glfwExtensionCount + 1;
+        const char **extensions = malloc(sizeof(*count * sizeof(const char *)));
+        memcpy(extensions, glfwExtensions, glfwExtensionCount * sizeof(const char *));
+        extensions[glfwExtensionCount] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+
+        uint32_t availableExtensionCount = 0;
+        vkEnumerateInstanceExtensionProperties(NULL, &availableExtensionCount, NULL);
+
+        VkExtensionProperties availableExtensions[availableExtensionCount];
+        vkEnumerateInstanceExtensionProperties(NULL, &availableExtensionCount, availableExtensions);
+
+        for (uint32_t i = 0; i < *count; ++i) {
+                for (uint32_t j = 0; j < availableExtensionCount; ++j) {
+                        if (strcmp(extensions[i], availableExtensions[j].extensionName) == 0)
+                                goto nextExtension;
+                }
+
+                printf("Failed to locate a required Vulkan instance extension!");
+                exit(-1);
+
+                nextExtension:;
+        }
+
+        return extensions;      
+#endif
 }
 
 static void createInstance(Renderer renderer)
@@ -39,6 +79,9 @@ static void createInstance(Renderer renderer)
                 .pEngineName = "Mountain Smithy"
         };
 
+        uint32_t extensionCount = 0;
+        const char **extensions = getInstanceExtensions(&extensionCount);
+
         VkInstanceCreateInfo createInfo = {
                 .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
                 .pApplicationInfo = &appInfo
@@ -46,14 +89,20 @@ static void createInstance(Renderer renderer)
 
         assert_vulkan(vkCreateInstance(&createInfo, NULL, &renderer->instance),
                 "Failed to create a Vulkan instance!");
+
+#ifndef NDEBUG
+        free(extensions);
+#endif
 }
 
-void createRenderer(Renderer* renderer)
+Renderer createRenderer()
 {
-        *renderer = malloc(sizeof(struct Renderer_T));
+        Renderer renderer = malloc(sizeof(struct Renderer_T));
 
-        createWindow(*renderer);
-        createInstance(*renderer);
+        createWindow(renderer);
+        createInstance(renderer);
+
+        return renderer;
 }
 
 void runRenderer(const Renderer renderer)

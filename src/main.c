@@ -4,8 +4,7 @@
 
 int main()
 {
-        Renderer renderer;
-        createRenderer(&renderer);
+        Renderer renderer = createRenderer();
         runRenderer(renderer);
         destroyRenderer(renderer);
 }
