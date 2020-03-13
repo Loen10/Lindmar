@@ -9,11 +9,7 @@
 
 #define WIDTH 1280
 #define HEIGHT 720
-#define assert_vulkan(res, msg) \
-if (res != VK_SUCCESS) { \
-        printf("%s", msg); \
-        exit(-1); \
-}
+#define assert_vulkan(res, msg) if (res != VK_SUCCESS) { printf("%s", msg); exit(-1); }
 
 struct Renderer_T {
         GLFWwindow *window;
@@ -68,6 +64,38 @@ static const char **getInstanceExtensions(uint32_t *count)
 #endif
 }
 
+#ifndef NDEBUG
+/*
+ * Should be cleaned up by caller
+ */
+static const char **getLayers(uint32_t *count) 
+{
+        *count = 1;
+        const char **layers = malloc(*count * sizeof(const char *));
+        layers[0] = "VK_LAYER_LUNARG_standard_validation";
+
+        uint32_t availableLayerCount = 0;
+        vkEnumerateInstanceLayerProperties(&availableLayerCount, NULL);
+
+        VkLayerProperties availableLayers[availableLayerCount];
+        vkEnumerateInstanceLayerProperties(&availableLayerCount, availableLayers);
+
+        for (int i = 0; i < *count; ++i) {
+                for (int j = 0; j < availableLayerCount; ++j) {
+                        if (strcmp(layers[i], availableLayers[j].layerName) == 0)
+                                goto nextLayer;
+                }
+
+                printf("Failed to locate a required Vulkan layer!");
+                exit(-1);
+
+                nextLayer:;
+        }
+
+        return layers;
+}
+#endif
+
 static void createInstance(Renderer renderer)
 {
         VkApplicationInfo appInfo = {
@@ -82,9 +110,20 @@ static void createInstance(Renderer renderer)
         uint32_t extensionCount = 0;
         const char **extensions = getInstanceExtensions(&extensionCount);
 
+#ifndef NDEBUG
+        uint32_t layerCount = 0;
+        const char **layers = getLayers(&layerCount);         
+#endif
+
         VkInstanceCreateInfo createInfo = {
                 .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-                .pApplicationInfo = &appInfo
+                .pApplicationInfo = &appInfo,
+                .enabledExtensionCount = extensionCount,
+                .ppEnabledExtensionNames = extensions,
+        #ifndef NDEBUG
+                .enabledLayerCount = layerCount,
+                .ppEnabledLayerNames = layers
+        #endif
         };
 
         assert_vulkan(vkCreateInstance(&createInfo, NULL, &renderer->instance),
@@ -92,6 +131,7 @@ static void createInstance(Renderer renderer)
 
 #ifndef NDEBUG
         free(extensions);
+        free(layers);
 #endif
 }
 
