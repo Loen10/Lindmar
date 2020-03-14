@@ -2,8 +2,8 @@
 #include <stdio.h>
 #include <malloc.h>
 #include <string.h>
+#define GLFW_INCLUDE_VULKAN
 #include <glfw/glfw3.h>
-#include <vulkan/vulkan.h>
 
 #include "renderer.h"
 
@@ -11,15 +11,39 @@
 #define HEIGHT 720
 #define assert_vulkan(res, msg) if (res != VK_SUCCESS) { printf("%s\n", msg); exit(-1); }
 
-struct Renderer_T {
+#ifndef NDEBUG
+#define LAYER_COUNT 1
+static const char* const LAYERS[] = { "VK_LAYER_LUNARG_standard_validation" };
+#endif
+
+#define DEVICE_EXTENSION_COUNT 1
+static const char* const DEVICE_EXTENSIONS[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+
+struct Renderer {
         GLFWwindow *window;
         VkInstance instance;
 #ifndef NDEBUG
         VkDebugUtilsMessengerEXT debugMessenger;
 #endif
+        VkSurfaceKHR surface;
+        VkPhysicalDevice gpu;
+        VkDevice device;
 };
 
-static void createWindow(Renderer renderer)
+struct QueueFamilyIndices {
+        int graphics;
+        int present;
+};
+
+struct SwapchainDetails {
+        uint32_t surfaceFormatCount;
+        uint32_t presentModeCount;
+        VkSurfaceCapabilitiesKHR capabilities;
+        VkSurfaceFormatKHR *surfaceFormats;
+        VkPresentModeKHR *presentModes;
+};
+
+static void createWindow(struct Renderer *renderer)
 {
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -68,24 +92,17 @@ static const char **getInstanceExtensions(uint32_t *count)
 }
 
 #ifndef NDEBUG
-/*
- * Should be cleaned up by caller
- */
-static const char **getLayers(uint32_t *count) 
+static void assertLayersSupport() 
 {
-        *count = 1;
-        const char **layers = malloc(*count * sizeof(const char *));
-        layers[0] = "VK_LAYER_LUNARG_standard_validation";
-
         uint32_t availableLayerCount = 0;
         vkEnumerateInstanceLayerProperties(&availableLayerCount, NULL);
 
         VkLayerProperties availableLayers[availableLayerCount];
         vkEnumerateInstanceLayerProperties(&availableLayerCount, availableLayers);
 
-        for (int i = 0; i < *count; ++i) {
-                for (int j = 0; j < availableLayerCount; ++j) {
-                        if (strcmp(layers[i], availableLayers[j].layerName) == 0)
+        for (uint32_t i = 0; i < LAYER_COUNT; ++i) {
+                for (uint32_t j = 0; j < availableLayerCount; ++j) {
+                        if (strcmp(LAYERS[i], availableLayers[j].layerName) == 0)
                                 goto nextLayer;
                 }
 
@@ -94,12 +111,10 @@ static const char **getLayers(uint32_t *count)
 
                 nextLayer:;
         }
-
-        return layers;
 }
 #endif
 
-static void createInstance(Renderer renderer)
+static void createInstance(struct Renderer *renderer)
 {
         VkApplicationInfo appInfo = {
                 .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -114,8 +129,7 @@ static void createInstance(Renderer renderer)
         const char **extensions = getInstanceExtensions(&extensionCount);
 
 #ifndef NDEBUG
-        uint32_t layerCount = 0;
-        const char **layers = getLayers(&layerCount);         
+        assertLayersSupport();
 #endif
 
         VkInstanceCreateInfo createInfo = {
@@ -124,8 +138,8 @@ static void createInstance(Renderer renderer)
                 .enabledExtensionCount = extensionCount,
                 .ppEnabledExtensionNames = extensions,
         #ifndef NDEBUG
-                .enabledLayerCount = layerCount,
-                .ppEnabledLayerNames = layers
+                .enabledLayerCount = LAYER_COUNT,
+                .ppEnabledLayerNames = LAYERS
         #endif
         };
 
@@ -134,7 +148,6 @@ static void createInstance(Renderer renderer)
 
 #ifndef NDEBUG
         free(extensions);
-        free(layers);
 #endif
 }
 
@@ -147,7 +160,7 @@ static VkBool32 debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeve
         return VK_FALSE;
 }
 
-static void createDebugMessenger(Renderer renderer)
+static void createDebugMessenger(struct Renderer *renderer)
 {
         VkDebugUtilsMessengerCreateInfoEXT createInfo = {
                 .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -166,7 +179,7 @@ static void createDebugMessenger(Renderer renderer)
                 "Failed to create a Vulkan debug messenger!");
 }
 
-static void destroyDebugMessenger(const Renderer renderer)
+static void destroyDebugMessenger(const struct Renderer *renderer)
 {
         PFN_vkDestroyDebugUtilsMessengerEXT destroyFunc = (PFN_vkDestroyDebugUtilsMessengerEXT)
                 vkGetInstanceProcAddr(renderer->instance, "vkDestroyDebugUtilsMessengerEXT");
@@ -175,28 +188,138 @@ static void destroyDebugMessenger(const Renderer renderer)
 }
 #endif
 
-Renderer createRenderer()
+static void createSurface(struct Renderer *renderer)
 {
-        Renderer renderer = malloc(sizeof(struct Renderer_T));
+        assert_vulkan(glfwCreateWindowSurface(renderer->instance, renderer->window, NULL, &renderer->surface),
+                "Failed to create a Vulkan surface!");
+}
 
+static int isQueueFamiliesComplete(const VkSurfaceKHR surface, const VkPhysicalDevice gpu,
+        struct QueueFamilyIndices *indices)
+{
+        uint32_t familyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &familyCount, NULL);
+
+        VkQueueFamilyProperties families[familyCount];
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &familyCount, families);
+
+        indices->graphics = -1;
+        indices->present = -1;
+
+        for (uint32_t i = 0; i < familyCount; ++i) {
+                if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+                        indices->graphics = i;
+                
+                VkBool32 presentSupport = 0;
+                vkGetPhysicalDeviceSurfaceSupportKHR(gpu, i, surface, &presentSupport);
+
+                if (presentSupport)
+                        indices->present = i;
+        }
+
+        return indices->graphics >= 0 && indices->present >= 0;
+}
+
+static int isDeviceExtensionsSupport(const VkPhysicalDevice gpu)
+{
+        uint32_t availableExtensionCount = 0;
+        vkEnumerateDeviceExtensionProperties(gpu, NULL, &availableExtensionCount, NULL);
+
+        VkExtensionProperties availableExtensions[availableExtensionCount];
+        vkEnumerateDeviceExtensionProperties(gpu, NULL, &availableExtensionCount, availableExtensions);
+
+        for (uint32_t i = 0; i < DEVICE_EXTENSION_COUNT; ++i) {
+                for (uint32_t j = 0; j < availableExtensionCount; ++j) {
+                        if (strcmp(DEVICE_EXTENSIONS[i], availableExtensions[j].extensionName) == 0)
+                                goto nextExtensions;
+                }
+
+                return 0;
+
+                nextExtensions:;
+        }
+
+        return 1;
+}
+
+static int isSwapchainDetailsComplete(const VkSurfaceKHR surface, const VkPhysicalDevice gpu,
+        struct SwapchainDetails *details)
+{
+        vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, surface, &details->surfaceFormatCount, NULL);
+
+        if (details->surfaceFormatCount == 0)
+                return 0;
+        
+        vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &details->presentModeCount, NULL);
+
+        if (details->presentModeCount == 0)
+                return 0;
+
+        details->surfaceFormats = malloc(sizeof(details->surfaceFormatCount));
+        details->presentModes = malloc(sizeof(details->presentModeCount));
+
+        vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, surface, &details->surfaceFormatCount, details->surfaceFormats);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &details->presentModeCount, details->presentModes);
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu, surface, &details->capabilities);
+
+        return 1;
+}
+
+static int isGpuSuitable(const VkSurfaceKHR surface, const VkPhysicalDevice gpu,
+        struct QueueFamilyIndices *indices, struct SwapchainDetails *details)
+{
+        return isQueueFamiliesComplete(surface, gpu, indices) &&
+                isDeviceExtensionsSupport(gpu) &&
+                isSwapchainDetailsComplete(surface, gpu, details);
+}
+
+static void selectGpu(struct Renderer *renderer, struct QueueFamilyIndices *indices, 
+        struct SwapchainDetails *details)
+{
+        uint32_t gpuCount = 0;
+        vkEnumeratePhysicalDevices(renderer->instance, &gpuCount, NULL);
+
+        VkPhysicalDevice gpus[gpuCount];
+        vkEnumeratePhysicalDevices(renderer->instance, &gpuCount, gpus);
+
+        for (uint32_t i = 0; i < gpuCount; ++i) {
+                if (isGpuSuitable(renderer->surface, gpus[i], indices, details)) {
+                        renderer->gpu = gpus[gpuCount];
+                        return;
+                }     
+        }
+
+        printf("Failed to select a suitable GPU!");
+        exit(-1);
+}
+
+struct Renderer *createRenderer()
+{
+        struct Renderer *renderer = malloc(sizeof(struct Renderer));
         createWindow(renderer);
         createInstance(renderer);
 #ifndef NDEBUG
         createDebugMessenger(renderer);
 #endif
+        createSurface(renderer);
+
+        struct QueueFamilyIndices indices;
+        struct SwapchainDetails details;
+        selectGpu(renderer, &indices, &details);
 
         return renderer;
 }
 
-void runRenderer(const Renderer renderer)
+void runRenderer(const struct Renderer *renderer)
 {
         while (!glfwWindowShouldClose(renderer->window)) {
                 glfwPollEvents();
         }
 }
 
-void destroyRenderer(const Renderer renderer)
+void destroyRenderer(struct Renderer *renderer)
 {
+        vkDestroySurfaceKHR(renderer->instance, renderer->surface, NULL);
 #ifndef NDEBUG
         destroyDebugMessenger(renderer);
 #endif

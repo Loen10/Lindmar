@@ -2,7 +2,7 @@
 
 int main()
 {
-        Renderer renderer = createRenderer();
+        struct Renderer *renderer = createRenderer();
         runRenderer(renderer);
         destroyRenderer(renderer);
 }

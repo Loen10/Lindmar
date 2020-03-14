@@ -1,12 +1,7 @@
 #pragma once
 
-typedef struct Renderer_T *Renderer;
+struct Renderer *createRenderer();
 
-/*
- * Should be cleaned up by destroyRenderer()
- */
-Renderer createRenderer();
+void runRenderer(const struct Renderer *renderer);
 
-void runRenderer(const Renderer renderer);
-
-void destroyRenderer(const Renderer renderer);
+void destroyRenderer(struct Renderer *renderer);
