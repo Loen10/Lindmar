@@ -1,5 +1,3 @@
-
-
 #include "renderer.h"
 
 int main()

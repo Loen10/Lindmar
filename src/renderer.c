@@ -9,11 +9,14 @@
 
 #define WIDTH 1280
 #define HEIGHT 720
-#define assert_vulkan(res, msg) if (res != VK_SUCCESS) { printf("%s", msg); exit(-1); }
+#define assert_vulkan(res, msg) if (res != VK_SUCCESS) { printf("%s\n", msg); exit(-1); }
 
 struct Renderer_T {
         GLFWwindow *window;
         VkInstance instance;
+#ifndef NDEBUG
+        VkDebugUtilsMessengerEXT debugMessenger;
+#endif
 };
 
 static void createWindow(Renderer renderer)
@@ -135,12 +138,52 @@ static void createInstance(Renderer renderer)
 #endif
 }
 
+#ifndef NDEBUG
+static VkBool32 debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT messageTypes,
+    const VkDebugUtilsMessengerCallbackDataEXT *callbackData, void *userData)
+{
+        printf("%s\n", callbackData->pMessage);
+        return VK_FALSE;
+}
+
+static void createDebugMessenger(Renderer renderer)
+{
+        VkDebugUtilsMessengerCreateInfoEXT createInfo = {
+                .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+                .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+                        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                        VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT,
+                .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT |
+                        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
+                .pfnUserCallback = &debugCallback
+        };
+
+        PFN_vkCreateDebugUtilsMessengerEXT createFunc = (PFN_vkCreateDebugUtilsMessengerEXT)
+                vkGetInstanceProcAddr(renderer->instance, "vkCreateDebugUtilsMessengerEXT");
+
+        assert_vulkan(createFunc(renderer->instance, &createInfo, NULL, &renderer->debugMessenger),
+                "Failed to create a Vulkan debug messenger!");
+}
+
+static void destroyDebugMessenger(const Renderer renderer)
+{
+        PFN_vkDestroyDebugUtilsMessengerEXT destroyFunc = (PFN_vkDestroyDebugUtilsMessengerEXT)
+                vkGetInstanceProcAddr(renderer->instance, "vkDestroyDebugUtilsMessengerEXT");
+
+        destroyFunc(renderer->instance, renderer->debugMessenger, NULL);
+}
+#endif
+
 Renderer createRenderer()
 {
         Renderer renderer = malloc(sizeof(struct Renderer_T));
 
         createWindow(renderer);
         createInstance(renderer);
+#ifndef NDEBUG
+        createDebugMessenger(renderer);
+#endif
 
         return renderer;
 }
@@ -154,6 +197,9 @@ void runRenderer(const Renderer renderer)
 
 void destroyRenderer(const Renderer renderer)
 {
+#ifndef NDEBUG
+        destroyDebugMessenger(renderer);
+#endif
         vkDestroyInstance(renderer->instance, NULL);
         glfwDestroyWindow(renderer->window);
         glfwTerminate();
