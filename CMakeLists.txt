@@ -7,7 +7,9 @@ add_executable(Lindmar
         src/renderer.c
         src/instance.c
         src/debug_messenger.c
-        src/device.c)
+        src/device.c
+        src/swapchain_details.c
+        src/queue_family_indices.c)
 
 target_include_directories(Lindmar PUBLIC include)
 target_link_directories(Lindmar PRIVATE lib)

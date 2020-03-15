@@ -1,19 +1,8 @@
 #pragma once
 
 #include "renderer.h"
-
-struct QueueFamilyIndices {
-        int graphics;
-        int present;
-};
-
-struct SwapchainDetails {
-        uint32_t surfaceFormatCount;
-        uint32_t presentModeCount;
-        VkSurfaceCapabilitiesKHR capabilities;
-        VkSurfaceFormatKHR *surfaceFormats;
-        VkPresentModeKHR *presentModes;
-};
+#include "queue_family_indices.h"
+#include "swapchain_details.h"
 
 void selectGpu(struct Renderer *renderer, struct QueueFamilyIndices *indices, 
         struct SwapchainDetails *details);
