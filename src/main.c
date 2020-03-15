@@ -2,7 +2,8 @@
 
 int main()
 {
-        struct Renderer *renderer = createRenderer();
-        runRenderer(renderer);
-        destroyRenderer(renderer);
+        struct Renderer renderer;
+        createRenderer(&renderer);
+        runRenderer(&renderer);
+        destroyRenderer(&renderer);
 }

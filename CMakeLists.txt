@@ -4,7 +4,10 @@ project(Lindmar C)
 
 add_executable(Lindmar
         src/main.c
-        src/renderer.c)
+        src/renderer.c
+        src/instance.c
+        src/debug_messenger.c
+        src/device.c)
 
 target_include_directories(Lindmar PUBLIC include)
 target_link_directories(Lindmar PRIVATE lib)
