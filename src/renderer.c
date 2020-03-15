@@ -284,13 +284,64 @@ static void selectGpu(struct Renderer *renderer, struct QueueFamilyIndices *indi
 
         for (uint32_t i = 0; i < gpuCount; ++i) {
                 if (isGpuSuitable(renderer->surface, gpus[i], indices, details)) {
-                        renderer->gpu = gpus[gpuCount];
+                        renderer->gpu = gpus[i];
                         return;
                 }     
         }
 
         printf("Failed to select a suitable GPU!");
         exit(-1);
+}
+
+/*
+ * Should be cleaned up by caller
+ */
+static VkDeviceQueueCreateInfo *getQueueCreateInfos(const struct QueueFamilyIndices *indices, uint32_t *count)
+{
+        float queuePriority = 1.0f;
+        VkDeviceQueueCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        createInfo.pQueuePriorities = &queuePriority;
+        createInfo.queueCount = 1;
+        createInfo.queueFamilyIndex = indices->graphics;
+
+        VkDeviceQueueCreateInfo *createInfos;
+
+        if (indices->graphics == indices->present) {
+                *count = 1;
+
+                createInfos = malloc(*count * sizeof(VkDeviceQueueCreateInfo));
+                createInfos[0] = createInfo;
+        } else {
+                *count = 2;
+
+                createInfos = createInfos = malloc(*count * sizeof(VkDeviceQueueCreateInfo));
+                createInfos[0] = createInfo;
+
+                createInfo.queueFamilyIndex = indices->present;
+
+                createInfos[1] = createInfo;
+        }
+
+        return createInfos;
+}
+
+static void createDevice(const struct QueueFamilyIndices *indices, struct Renderer *renderer)
+{
+        uint32_t queueInfoCount = 0;
+        VkDeviceQueueCreateInfo *queueInfos = getQueueCreateInfos(indices, &queueInfoCount);
+
+        VkPhysicalDeviceFeatures deviceFeatures = {};
+        VkDeviceCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        createInfo.pEnabledFeatures = &deviceFeatures;
+        createInfo.enabledExtensionCount = DEVICE_EXTENSION_COUNT;
+        createInfo.ppEnabledExtensionNames = DEVICE_EXTENSIONS;
+        createInfo.queueCreateInfoCount = queueInfoCount;
+        createInfo.pQueueCreateInfos = queueInfos;
+        
+        assert_vulkan(vkCreateDevice(renderer->gpu, &createInfo, NULL, &renderer->device),
+                "Failed to create a Vulkan device");
 }
 
 struct Renderer *createRenderer()
@@ -306,6 +357,7 @@ struct Renderer *createRenderer()
         struct QueueFamilyIndices indices;
         struct SwapchainDetails details;
         selectGpu(renderer, &indices, &details);
+        createDevice(&indices, renderer);
 
         return renderer;
 }
@@ -319,6 +371,7 @@ void runRenderer(const struct Renderer *renderer)
 
 void destroyRenderer(struct Renderer *renderer)
 {
+        vkDestroyDevice(renderer->device, NULL);
         vkDestroySurfaceKHR(renderer->instance, renderer->surface, NULL);
 #ifndef NDEBUG
         destroyDebugMessenger(renderer);

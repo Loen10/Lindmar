@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Lindmar)
+project(Lindmar C)
 
 add_executable(Lindmar
         src/main.c
