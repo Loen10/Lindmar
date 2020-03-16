@@ -7,8 +7,8 @@
 extern const char* const LAYERS[];
 #endif
 
-void createInstance(struct Renderer *renderer);
-const char **getInstanceExtensions();
-#ifndef NDEBUG
-void assertLayersSupport();
-#endif
+void create_instance(struct Renderer *renderer);
+
+void assert_layers_support();
+
+const char **get_instance_extensions();

@@ -5,37 +5,37 @@
 
 #include "debug_messenger.h"
 
-static VkBool32 debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-    VkDebugUtilsMessageTypeFlagsEXT messageTypes,
-    const VkDebugUtilsMessengerCallbackDataEXT *callbackData, void *userData)
+static VkBool32 callback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT type,
+    const VkDebugUtilsMessengerCallbackDataEXT *callback_data, void *user_data)
 {
-        printf("%s\n", callbackData->pMessage);
+        printf("%s\n", callback_data->pMessage);
         return VK_FALSE;
 }
 
-void createDebugMessenger(struct Renderer *renderer)
+void create_debug_messenger(struct Renderer *renderer)
 {
-        VkDebugUtilsMessengerCreateInfoEXT createInfo = {};
-        createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-        createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+        VkDebugUtilsMessengerCreateInfoEXT info = {};
+        info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+        info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT;
-        createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT |
+        info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT |
                 VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
-        createInfo.pfnUserCallback = &debugCallback;
+        info.pfnUserCallback = &callback;
 
-        PFN_vkCreateDebugUtilsMessengerEXT createFunc = (PFN_vkCreateDebugUtilsMessengerEXT)
+        PFN_vkCreateDebugUtilsMessengerEXT func = (PFN_vkCreateDebugUtilsMessengerEXT)
                 vkGetInstanceProcAddr(renderer->instance, "vkCreateDebugUtilsMessengerEXT");
 
-        assertVulkan(createFunc(renderer->instance, &createInfo, NULL, &renderer->debugMessenger),
+        assert_vulkan(func(renderer->instance, &info, NULL, &renderer->debug_messenger),
                 "Failed to create a Vulkan debug messenger!");
 }
 
-void destroyDebugMessenger(const struct Renderer *renderer)
+void destroy_debug_messenger(const struct Renderer *renderer)
 {
-        PFN_vkDestroyDebugUtilsMessengerEXT destroyFunc = (PFN_vkDestroyDebugUtilsMessengerEXT)
+        PFN_vkDestroyDebugUtilsMessengerEXT func = (PFN_vkDestroyDebugUtilsMessengerEXT)
                 vkGetInstanceProcAddr(renderer->instance, "vkDestroyDebugUtilsMessengerEXT");
 
-        destroyFunc(renderer->instance, renderer->debugMessenger, NULL);
+        func(renderer->instance, renderer->debug_messenger, NULL);
 }
 #endif

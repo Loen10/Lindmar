@@ -3,66 +3,7 @@
 
 #include "queue_family_indices.h"
 
-int isQueueFamiliesComplete(const VkSurfaceKHR surface, const VkPhysicalDevice gpu,
-        struct QueueFamilyIndices *indices)
-{
-        uint32_t familyCount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &familyCount, NULL);
-
-        VkQueueFamilyProperties families[familyCount];
-        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &familyCount, families);
-
-        indices->graphics = -1;
-        indices->present = -1;
-
-        for (uint32_t i = 0; i < familyCount; ++i) {
-                if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-                        indices->graphics = i;
-                
-                VkBool32 presentSupport = 0;
-                vkGetPhysicalDeviceSurfaceSupportKHR(gpu, i, surface, &presentSupport);
-
-                if (presentSupport)
-                        indices->present = i;
-        }
-
-        return indices->graphics >= 0 && indices->present >= 0;
-}
-
-/*
- * Should be cleaned up by caller
- */
-VkDeviceQueueCreateInfo *getQueueCreateInfos(const struct QueueFamilyIndices *indices, uint32_t *count)
-{
-        float queuePriority = 1.0f;
-        VkDeviceQueueCreateInfo createInfo = {};
-        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        createInfo.pQueuePriorities = &queuePriority;
-        createInfo.queueCount = 1;
-        createInfo.queueFamilyIndex = indices->graphics;
-
-        VkDeviceQueueCreateInfo *createInfos;
-
-        if (indices->graphics == indices->present) {
-                *count = 1;
-
-                createInfos = malloc(*count * sizeof(VkDeviceQueueCreateInfo));
-                createInfos[0] = createInfo;
-        } else {
-                *count = 2;
-
-                createInfos = createInfos = malloc(*count * sizeof(VkDeviceQueueCreateInfo));
-                createInfos[0] = createInfo;
-
-                createInfo.queueFamilyIndex = indices->present;
-
-                createInfos[1] = createInfo;
-        }
-
-        return createInfos;
-}
-
-uint32_t *getQueueIndices(const struct QueueFamilyIndices *indices, uint32_t *count,
+uint32_t *get_queue_indices(const struct QueueFamilyIndices *indices, uint32_t *count,
         VkSharingMode *sharing_mode)
 {
         uint32_t *qindices;
@@ -80,4 +21,63 @@ uint32_t *getQueueIndices(const struct QueueFamilyIndices *indices, uint32_t *co
         }
 
         return qindices;    
+}
+
+int is_queue_families_complete(const VkSurfaceKHR surface, const VkPhysicalDevice gpu,
+        struct QueueFamilyIndices *indices)
+{
+        uint32_t famcount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &famcount, NULL);
+
+        VkQueueFamilyProperties families[famcount];
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &famcount, families);
+
+        indices->graphics = -1;
+        indices->present = -1;
+
+        for (uint32_t i = 0; i < famcount; ++i) {
+                if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+                        indices->graphics = i;
+                
+                VkBool32 prsntsupport = 0;
+                vkGetPhysicalDeviceSurfaceSupportKHR(gpu, i, surface, &prsntsupport);
+
+                if (prsntsupport)
+                        indices->present = i;
+        }
+
+        return indices->graphics >= 0 && indices->present >= 0;
+}
+
+/*
+ * Should be cleaned up by caller
+ */
+VkDeviceQueueCreateInfo *get_queue_create_infos(const struct QueueFamilyIndices *indices, uint32_t *count)
+{
+        float priority = 1.0f;
+        VkDeviceQueueCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        info.pQueuePriorities = &priority;
+        info.queueCount = 1;
+        info.queueFamilyIndex = indices->graphics;
+
+        VkDeviceQueueCreateInfo *infos;
+
+        if (indices->graphics == indices->present) {
+                *count = 1;
+
+                infos = malloc(*count * sizeof(VkDeviceQueueCreateInfo));
+                infos[0] = info;
+        } else {
+                *count = 2;
+
+                infos = infos = malloc(*count * sizeof(VkDeviceQueueCreateInfo));
+                infos[0] = info;
+
+                info.queueFamilyIndex = indices->present;
+
+                infos[1] = info;
+        }
+
+        return infos;
 }

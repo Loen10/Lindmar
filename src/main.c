@@ -3,7 +3,7 @@
 int main()
 {
         struct Renderer renderer;
-        createRenderer(&renderer);
-        runRenderer(&renderer);
-        destroyRenderer(&renderer);
+        create_renderer(&renderer);
+        run_renderer(&renderer);
+        destroy_renderer(&renderer);
 }

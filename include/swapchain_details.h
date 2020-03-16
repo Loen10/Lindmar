@@ -3,18 +3,27 @@
 #include <vulkan/vulkan.h>
 
 struct SwapchainDetails {
-        uint32_t surfaceFormatCount;
-        uint32_t presentModeCount;
+        uint32_t surface_format_count;
+        uint32_t present_mode_count;
         VkSurfaceCapabilitiesKHR capabilities;
-        VkSurfaceFormatKHR *surfaceFormats;
-        VkPresentModeKHR *presentModes;
+        VkSurfaceFormatKHR *surface_formats;
+        VkPresentModeKHR *present_modes;
 };
 
-int isSwapchainDetailsComplete(const VkSurfaceKHR surface, const VkPhysicalDevice gpu,
-        struct SwapchainDetails *details);
-void selectSurfaceFormat(uint32_t count, const VkSurfaceFormatKHR *surface_formats,
+void select_surface_format(uint32_t count, const VkSurfaceFormatKHR *surface_formats,
         VkSurfaceFormatKHR *surface_format);
-VkPresentModeKHR selectPresentMode(uint32_t count, const VkPresentModeKHR *present_modes);
-void selectExtent(const VkSurfaceCapabilitiesKHR *capabilities, uint32_t width,
+
+void select_extent(const VkSurfaceCapabilitiesKHR *capabilities, uint32_t width,
         uint32_t height, VkExtent2D *extent);
-uint32_t selectImageCount(const VkSurfaceCapabilitiesKHR *capabilities);
+
+void destroy_swapchain_details(struct SwapchainDetails *details);
+
+uint32_t select_image_count(const VkSurfaceCapabilitiesKHR *capabilities);
+
+/*
+ * details should be cleaned up by destroy_swapchain_details()
+ */ 
+int is_swapchain_details_complete(const VkSurfaceKHR surface, const VkPhysicalDevice gpu,
+        struct SwapchainDetails *details);
+
+VkPresentModeKHR select_present_mode(uint32_t count, const VkPresentModeKHR *present_modes);

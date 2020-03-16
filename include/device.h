@@ -4,6 +4,7 @@
 #include "queue_family_indices.h"
 #include "swapchain_details.h"
 
-void selectGpu(struct Renderer *renderer, struct QueueFamilyIndices *indices, 
+void select_gpu(struct Renderer *renderer, struct QueueFamilyIndices *indices, 
         struct SwapchainDetails *details);
-void createDevice(const struct QueueFamilyIndices *indices, struct Renderer *renderer);
+        
+void create_device(const struct QueueFamilyIndices *indices, struct Renderer *renderer);

@@ -4,18 +4,27 @@
 #include <glfw/glfw3.h>
 
 struct Renderer {
+        uint32_t image_count;
         GLFWwindow *window;
+        VkImageView *image_views;
         VkInstance instance;
 #ifndef NDEBUG
-        VkDebugUtilsMessengerEXT debugMessenger;
+        VkDebugUtilsMessengerEXT debug_messenger;
 #endif
         VkSurfaceKHR surface;
         VkPhysicalDevice gpu;
         VkDevice device;
+        VkSurfaceFormatKHR surface_format;
         VkSwapchainKHR swapchain;
 };
 
-void createRenderer(struct Renderer *renderer);
-void runRenderer(const struct Renderer *renderer);
-void destroyRenderer(struct Renderer *renderer);
-void assertVulkan(VkResult res, const char *msg);
+/*
+ * renderer should be cleaned up by destroy_renderer()
+ */
+void create_renderer(struct Renderer *renderer);
+
+void run_renderer(const struct Renderer *renderer);
+
+void destroy_renderer(struct Renderer *renderer);
+
+void assert_vulkan(VkResult res, const char *msg);
