@@ -16,6 +16,9 @@ struct Renderer {
         VkDevice device;
         VkSurfaceFormatKHR surface_format;
         VkSwapchainKHR swapchain;
+        VkRenderPass render_pass;
+        VkPipelineLayout pipeline_layout;
+        VkPipeline graphics_pipeline;
 };
 
 /*

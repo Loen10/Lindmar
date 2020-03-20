@@ -100,6 +100,179 @@ static void destroy_image_views(struct Renderer *renderer)
         free(renderer->image_views);
 }
 
+/*
+ * renderer->render_pass should be cleaned up by vkDestroyRenderPass()
+ */
+static void create_render_pass(struct Renderer *renderer)
+{
+        VkAttachmentDescription attachment = {};
+        attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        attachment.format = renderer->surface_format.format;
+        attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+        VkAttachmentReference attchref = {};
+        attchref.attachment = 0;
+        attchref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass = {};
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &attchref;
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+
+        VkRenderPassCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        info.attachmentCount = 1;
+        info.pAttachments = &attachment;
+        info.pSubpasses = &subpass;
+        info.subpassCount = 1;
+
+        assert_vulkan(vkCreateRenderPass(renderer->device, &info, NULL, &renderer->render_pass),
+                "Failed to create a Vulkan render pass!");
+}
+
+/* Should be cleaned up by free() */
+static uint32_t *get_shader_code(const char *path, size_t *size)
+{
+        FILE *file = fopen(path, "rb");
+
+        if (file == NULL) {
+                printf("Failed to open file at %s\n", path);
+                exit(-1);
+        }
+
+        fseek(file, 0, SEEK_END);
+        
+        *size = ftell(file);
+
+        rewind(file);
+
+        size_t count = *size / 4;
+        uint32_t *code = malloc(*size);
+        
+        if (fread(code, sizeof(uint32_t), count, file) != count) {
+                printf("Failed to read file at %s\n", path);
+                exit(-1);
+        }
+        
+        fclose(file);
+
+        return code;
+}
+
+/* info->module should be cleaned up by vkDestroyShaderModule() */
+static void create_shader_info(const char *path, const VkShaderStageFlagBits stage,
+        const VkDevice device, VkPipelineShaderStageCreateInfo *info)
+{
+        size_t code_size = 0;
+        uint32_t *code = get_shader_code(path, &code_size);
+
+        VkShaderModuleCreateInfo modinfo = {};
+        modinfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        modinfo.codeSize = code_size;
+        modinfo.pCode = code;
+
+        info->sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        info->pName = "main";
+        info->stage = stage;
+        info->pSpecializationInfo = NULL;
+        info->pNext = NULL;
+        info->flags = 0;
+        assert_vulkan(vkCreateShaderModule(device, &modinfo, NULL,
+                &info->module), "Failed to create a Vulkan shader module!");
+        //free(code);
+}
+
+/*
+ * renderer->pipeline_layout should be cleaned up by vkDestroyPipelineLayout()
+ * renderer->graphics_pipeline should be cleaned up by vkDestroyPipeline()
+ */
+static void create_graphics_pipeline(struct Renderer *renderer)
+{
+        VkPipelineLayoutCreateInfo lytinfo = {};
+        lytinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+        assert_vulkan(vkCreatePipelineLayout(renderer->device, &lytinfo, NULL,
+                &renderer->pipeline_layout),
+                "Failed to create a Vulkan pipeline layout!");
+
+        VkPipelineColorBlendAttachmentState blndattach_state = {};
+        blndattach_state.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | 
+                VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                VK_COLOR_COMPONENT_A_BIT;
+
+        VkPipelineColorBlendStateCreateInfo blndinfo = {};
+        blndinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        blndinfo.attachmentCount = 1;
+        blndinfo.pAttachments = &blndattach_state;
+
+        VkPipelineInputAssemblyStateCreateInfo inptassembly_info = {};
+        inptassembly_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inptassembly_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+        VkPipelineRasterizationStateCreateInfo rstrinfo = {};
+        rstrinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rstrinfo.cullMode = VK_CULL_MODE_BACK_BIT;
+        rstrinfo.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rstrinfo.lineWidth = 1.0f;
+        rstrinfo.polygonMode = VK_POLYGON_MODE_FILL;
+
+        VkPipelineMultisampleStateCreateInfo mltsample_info = {};
+        mltsample_info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        mltsample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        uint32_t shdrcount = 2;
+        VkPipelineShaderStageCreateInfo shdrinfos[shdrcount];
+        create_shader_info("../include/shader/basic_vs.spv",
+                VK_SHADER_STAGE_VERTEX_BIT, renderer->device, &shdrinfos[0]);
+        create_shader_info("../include/shader/basic_fs.spv",
+                VK_SHADER_STAGE_FRAGMENT_BIT, renderer->device, &shdrinfos[1]);
+
+        VkPipelineVertexInputStateCreateInfo vrtinput_info = {};
+        vrtinput_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        
+        VkRect2D scissor = {};
+        scissor.extent.height = HEIGHT;
+        scissor.extent.width = WIDTH;
+
+        VkViewport viewport= {};
+        viewport.height = HEIGHT;
+        viewport.width = WIDTH;
+        viewport.maxDepth = 1.0f;
+
+        VkPipelineViewportStateCreateInfo vwprtinfo = {};
+        vwprtinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        vwprtinfo.pScissors = &scissor;
+        vwprtinfo.pViewports = &viewport;
+        vwprtinfo.scissorCount = 1;
+        vwprtinfo.viewportCount = 1;
+
+        VkGraphicsPipelineCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        info.layout = renderer->pipeline_layout;
+        info.pColorBlendState = &blndinfo;
+        info.pInputAssemblyState = &inptassembly_info;
+        info.pRasterizationState = &rstrinfo;
+        info.pMultisampleState = &mltsample_info;
+        info.pStages = shdrinfos;
+        info.pVertexInputState = &vrtinput_info;
+        info.pViewportState = &vwprtinfo;
+        info.renderPass = renderer->render_pass;
+        info.stageCount = shdrcount;
+        info.subpass = 0;
+
+        assert_vulkan(vkCreateGraphicsPipelines(renderer->device, NULL, 1, &info, NULL,
+                &renderer->graphics_pipeline),
+                "Failed to create a Vulkan graphics pipeline!");
+
+        vkDestroyShaderModule(renderer->device, shdrinfos[0].module, NULL);
+        vkDestroyShaderModule(renderer->device, shdrinfos[1].module, NULL);
+}
+
 void create_renderer(struct Renderer *renderer)
 {
         create_window(renderer);
@@ -116,6 +289,8 @@ void create_renderer(struct Renderer *renderer)
         create_swapchain(&indices, &details, renderer);
         create_image_views(renderer);
         destroy_swapchain_details(&details);
+        create_render_pass(renderer);
+        create_graphics_pipeline(renderer);
 }
 
 void run_renderer(const struct Renderer *renderer)
@@ -127,6 +302,10 @@ void run_renderer(const struct Renderer *renderer)
 
 void destroy_renderer(struct Renderer *renderer)
 {
+        vkDestroyPipeline(renderer->device, renderer->graphics_pipeline, NULL);
+        vkDestroyPipelineLayout(renderer->device, renderer->pipeline_layout,
+                NULL);
+        vkDestroyRenderPass(renderer->device, renderer->render_pass, NULL);
         destroy_image_views(renderer);
         vkDestroySwapchainKHR(renderer->device, renderer->swapchain, NULL);
         vkDestroyDevice(renderer->device, NULL);
