@@ -1,45 +1,12 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#define GLFW_INCLUDE_VULKAN
+#include <glfw/glfw3.h>
 
 #include "instance.h"
 
 const char* const LAYERS[] = { "VK_LAYER_LUNARG_standard_validation" };
-
-void create_instance(struct Renderer *renderer)
-{
-        VkApplicationInfo appinfo = {};
-        appinfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appinfo.apiVersion = VK_API_VERSION_1_0;
-        appinfo.applicationVersion = VK_MAKE_VERSION(0, 0, 0);
-        appinfo.pApplicationName = "Lindmar";
-        appinfo.engineVersion = VK_MAKE_VERSION(0, 0, 0);
-        appinfo.pEngineName = "Mountain Smithy";
-       
-        uint32_t extcount = 0;
-        const char **exts = get_instance_extensions(&extcount);
-
-#ifndef NDEBUG
-        assert_layers_support();
-#endif
-
-        VkInstanceCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        info.pApplicationInfo = &appinfo;
-        info.enabledExtensionCount = extcount;
-        info.ppEnabledExtensionNames = exts;
-#ifndef NDEBUG
-        info.enabledLayerCount = LAYER_COUNT;
-        info.ppEnabledLayerNames = LAYERS;
-#endif
-
-        assert_vulkan(vkCreateInstance(&info, NULL, &renderer->instance),
-                "Failed to create a Vulkan instance!");
-
-#ifndef NDEBUG
-        free(exts);
-#endif
-}
 
 #ifndef NDEBUG
 void assert_layers_support() 
