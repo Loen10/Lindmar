@@ -9,7 +9,7 @@
 const char* const LAYERS[] = { "VK_LAYER_LUNARG_standard_validation" };
 
 #ifndef NDEBUG
-void assert_layers_support() 
+void assert_layers_support(void) 
 {
         uint32_t lyrcount = 0;
         vkEnumerateInstanceLayerProperties(&lyrcount, NULL);
@@ -41,10 +41,12 @@ const char **get_instance_extensions(uint32_t *count)
         return glfwGetRequiredInstanceExtensions(count);
 #else
         uint32_t glfwext_count = 0;
-        const char **glfwexts = glfwGetRequiredInstanceExtensions(&glfwext_count);
+        const char **glfwexts = glfwGetRequiredInstanceExtensions(
+                &glfwext_count);
 
         *count = glfwext_count + 1;
-        const char **extensions = malloc(sizeof(*count * sizeof(const char *)));
+        const char **extensions = malloc(
+                sizeof(*count * sizeof(const char *)));
         memcpy(extensions, glfwexts, glfwext_count * sizeof(const char *));
         extensions[glfwext_count] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 
@@ -60,7 +62,8 @@ const char **get_instance_extensions(uint32_t *count)
                                 goto next_extensions;
                 }
 
-                printf("Failed to locate a required Vulkan instance extension!");
+                printf("Failed to locate a required \
+                        Vulkan instance extension!");
                 exit(-1);
 
                 next_extensions:;
