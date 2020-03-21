@@ -25,11 +25,15 @@ struct Renderer {
         VkSurfaceKHR surface;
         VkPhysicalDevice gpu;
         VkDevice device;
+        VkQueue graphics_queue;
+        VkQueue present_queue;
         VkSurfaceFormatKHR surface_format;
         VkSwapchainKHR swapchain;
         VkRenderPass render_pass;
         VkPipelineLayout pipeline_layout;
         VkPipeline graphics_pipeline;
+        VkCommandPool command_pool;
+        VkCommandBuffer *command_buffers;
 };
 
 struct QueueFamilyIndices {
@@ -45,14 +49,6 @@ struct SwapchainDetails {
         VkPresentModeKHR *present_modes;
 };
 
-static void assert_vulkan(VkResult res, const char *msg)
-{
-        if (res != VK_SUCCESS) {
-                printf("%s\n", msg);
-                exit(-1);
-        }
-}
-
 // renderer->window should be cleaned up by glfwDestroyWindow()
 static void create_window(struct Renderer *renderer)
 {
@@ -62,6 +58,14 @@ static void create_window(struct Renderer *renderer)
 
         renderer->window = glfwCreateWindow(WIDTH, HEIGHT, "Lindmar",
                 NULL, NULL);
+}
+
+static void assert_vulkan(VkResult res, const char *msg)
+{
+        if (res != VK_SUCCESS) {
+                printf("%s\n", msg);
+                exit(-1);
+        }
 }
 
 // renderer->instance should be cleaned up by vkDestroyInstance()
@@ -98,62 +102,6 @@ static void create_instance(struct Renderer *renderer)
 #ifndef NDEBUG
         free(exts);
 #endif
-}
-
-// Should be cleaned up by free()
-static VkDeviceQueueCreateInfo *get_queue_create_infos(
-        const struct QueueFamilyIndices *indices, uint32_t *count)
-{
-        float priority = 1.0f;
-        VkDeviceQueueCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        info.pQueuePriorities = &priority;
-        info.queueCount = 1;
-        info.queueFamilyIndex = indices->graphics;
-
-        VkDeviceQueueCreateInfo *infos;
-
-        if (indices->graphics == indices->present) {
-                *count = 1;
-
-                infos = malloc(*count * sizeof(VkDeviceQueueCreateInfo));
-                infos[0] = info;
-        } else {
-                *count = 2;
-
-                infos = infos = malloc(
-                        *count * sizeof(VkDeviceQueueCreateInfo));
-                infos[0] = info;
-
-                info.queueFamilyIndex = indices->present;
-
-                infos[1] = info;
-        }
-
-        return infos;
-}
-
-// renderer->device should be cleaned up by vkDestroyDevice()
-static void create_device(const struct QueueFamilyIndices *indices,
-        struct Renderer *renderer)
-{
-        uint32_t qinfo_count = 0;
-        VkDeviceQueueCreateInfo *qinfos = get_queue_create_infos(
-                indices, &qinfo_count);
-
-        VkPhysicalDeviceFeatures dvcfeatures = {};
-        VkDeviceCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        info.pEnabledFeatures = &dvcfeatures;
-        info.enabledExtensionCount = DEVICE_EXTENSION_COUNT;
-        info.ppEnabledExtensionNames = DEVICE_EXTENSIONS;
-        info.queueCreateInfoCount = qinfo_count;
-        info.pQueueCreateInfos = qinfos;
-        
-        assert_vulkan(vkCreateDevice(renderer->gpu, &info, NULL,
-                &renderer->device), "Failed to create a Vulkan device");
-        
-        free(qinfos);
 }
 
 #ifndef NDEBUG
@@ -202,6 +150,183 @@ static void create_surface(struct Renderer *renderer)
         assert_vulkan(glfwCreateWindowSurface(renderer->instance,
                 renderer->window, NULL, &renderer->surface),
                 "Failed to create a Vulkan surface!");
+}
+
+static int is_queue_families_complete(const VkSurfaceKHR surface,
+        const VkPhysicalDevice gpu, struct QueueFamilyIndices *indices)
+{
+        uint32_t famcount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &famcount, NULL);
+
+        VkQueueFamilyProperties families[famcount];
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &famcount, families);
+
+        indices->graphics = -1;
+        indices->present = -1;
+
+        for (uint32_t i = 0; i < famcount; ++i) {
+                if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+                        indices->graphics = i;
+                
+                VkBool32 prsntsupport = 0;
+                vkGetPhysicalDeviceSurfaceSupportKHR(gpu, i, surface,
+                        &prsntsupport);
+
+                if (prsntsupport)
+                        indices->present = i;
+        }
+
+        return indices->graphics >= 0 && indices->present >= 0;
+}
+
+static int is_device_extensions_support(const VkPhysicalDevice gpu)
+{
+        uint32_t extcount = 0;
+        vkEnumerateDeviceExtensionProperties(gpu, NULL, &extcount, NULL);
+
+        VkExtensionProperties exts[extcount];
+        vkEnumerateDeviceExtensionProperties(gpu, NULL, &extcount, exts);
+
+        for (uint32_t i = 0; i < DEVICE_EXTENSION_COUNT; ++i) {
+                for (uint32_t j = 0; j < extcount; ++j) {
+                        if (strcmp(DEVICE_EXTENSIONS[i],
+                                exts[j].extensionName) == 0)
+                                goto nextExtensions;
+                }
+
+                return 0;
+
+                nextExtensions:;
+        }
+
+        return 1;
+}
+
+// details should be cleaned up by destroy_swapchain_details
+static int is_swapchain_details_complete(const VkSurfaceKHR surface,
+        const VkPhysicalDevice gpu, struct SwapchainDetails *details)
+{
+        vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, surface,
+                &details->surface_format_count, NULL);
+
+        if (details->surface_format_count == 0)
+                return 0;
+        
+        vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface,
+                &details->present_mode_count, NULL);
+
+        if (details->present_mode_count == 0)
+                return 0;
+
+        details->surface_formats = malloc(
+                sizeof(details->surface_format_count));
+        details->present_modes = malloc(sizeof(details->present_mode_count));
+
+        vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, surface,
+                &details->surface_format_count, details->surface_formats);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface,
+                &details->present_mode_count, details->present_modes);
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu, surface,
+                &details->capabilities);
+
+        return 1;
+}
+
+static void destroy_swapchain_details(struct SwapchainDetails *details)
+{
+        free(details->surface_formats);
+        free(details->present_modes);
+}
+
+// details should be cleaned up by destroy_swapchain_details()
+static int is_gpu_suitable(const VkSurfaceKHR surface,
+        const VkPhysicalDevice gpu, struct QueueFamilyIndices *indices,
+        struct SwapchainDetails *details)
+{
+        return is_queue_families_complete(surface, gpu, indices) &&
+                is_device_extensions_support(gpu) &&
+                is_swapchain_details_complete(surface, gpu, details);
+}
+
+// details should be cleaned up by destroy_swapchain_details()
+static void select_gpu(struct Renderer *renderer,
+        struct QueueFamilyIndices *indices, struct SwapchainDetails *details)
+{
+        uint32_t gpucount = 0;
+        vkEnumeratePhysicalDevices(renderer->instance, &gpucount, NULL);
+
+        VkPhysicalDevice gpus[gpucount];
+        vkEnumeratePhysicalDevices(renderer->instance, &gpucount, gpus);
+
+        for (uint32_t i = 0; i < gpucount; ++i) {
+                if (is_gpu_suitable(renderer->surface, gpus[i], indices,
+                        details)) {
+                        renderer->gpu = gpus[i];
+                        return;
+                }
+        }
+
+        printf("Failed to select a suitable GPU!");
+        exit(-1);
+}
+
+// Should be cleaned up by free()
+static VkDeviceQueueCreateInfo *get_queue_create_infos(
+        const struct QueueFamilyIndices *indices, uint32_t *count)
+{
+        float priority = 1.0f;
+        VkDeviceQueueCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        info.pQueuePriorities = &priority;
+        info.queueCount = 1;
+        info.queueFamilyIndex = indices->graphics;
+
+        VkDeviceQueueCreateInfo *infos;
+
+        if (indices->graphics == indices->present) {
+                *count = 1;
+
+                infos = malloc(*count * sizeof(VkDeviceQueueCreateInfo));
+                infos[0] = info;
+        } else {
+                *count = 2;
+
+                infos = infos = malloc(
+                        *count * sizeof(VkDeviceQueueCreateInfo));
+                infos[0] = info;
+
+                info.queueFamilyIndex = indices->present;
+
+                infos[1] = info;
+        }
+
+        return infos;
+}
+
+// renderer->device should be cleaned up by vkDestroyDevice()
+static void create_device(const struct QueueFamilyIndices *indices,
+        struct Renderer *renderer)
+{
+        uint32_t qinfo_count = 0;
+        VkDeviceQueueCreateInfo *qinfos = get_queue_create_infos(
+                indices, &qinfo_count);
+
+        VkPhysicalDeviceFeatures features = {};
+        VkDeviceCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        info.pEnabledFeatures = &features;
+        info.enabledExtensionCount = DEVICE_EXTENSION_COUNT;
+        info.ppEnabledExtensionNames = DEVICE_EXTENSIONS;
+        info.queueCreateInfoCount = qinfo_count;
+        info.pQueueCreateInfos = qinfos;
+        
+        assert_vulkan(vkCreateDevice(renderer->gpu, &info, NULL,
+                &renderer->device), "Failed to create a Vulkan device");
+
+        vkGetDeviceQueue(renderer->device, indices->graphics, 0, &renderer->graphics_queue);
+        vkGetDeviceQueue(renderer->device, indices->present, 0, &renderer->present_queue);
+        
+        free(qinfos);
 }
 
 static void select_surface_format(uint32_t count, 
@@ -357,6 +482,16 @@ static void create_image_views(struct Renderer *renderer)
         }
 }
 
+static void destroy_image_views(struct Renderer *renderer)
+{
+        for (uint32_t i = 0; i < renderer->image_count; ++i) {
+                vkDestroyImageView(renderer->device, renderer->image_views[i],
+                        NULL);
+        }
+
+        free(renderer->image_views);
+}
+
 // renderer->render_pass should be cleaned up by vkDestroyRenderPass()
 static void create_render_pass(struct Renderer *renderer)
 {
@@ -420,28 +555,46 @@ static uint32_t *get_shader_code(const char *path, size_t *size)
         return code;
 }
 
-// info->module should be cleaned up by vkDestroyShaderModule()
-static void create_shader_info(const char *path,
-        const VkShaderStageFlagBits stage, const VkDevice device,
-        VkPipelineShaderStageCreateInfo *info)
+// infos should be cleaned up by destroy_shader_infos()
+static void create_shader_infos(const VkDevice device,
+        VkPipelineShaderStageCreateInfo infos[2])
 {
-        size_t code_size = 0;
-        uint32_t *code = get_shader_code(path, &code_size);
+        const char *paths[2] = { 
+                "../include/shader/basic_vs.spv",
+                "../include/shader/basic_fs.spv" 
+        };
 
-        VkShaderModuleCreateInfo modinfo = {};
-        modinfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        modinfo.codeSize = code_size;
-        modinfo.pCode = code;
+        const VkShaderStageFlagBits stages[2] = {
+                VK_SHADER_STAGE_VERTEX_BIT,
+                VK_SHADER_STAGE_FRAGMENT_BIT
+        };
 
-        info->sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        info->pName = "main";
-        info->stage = stage;
-        info->pSpecializationInfo = NULL;
-        info->pNext = NULL;
-        info->flags = 0;
-        assert_vulkan(vkCreateShaderModule(device, &modinfo, NULL,
-                &info->module), "Failed to create a Vulkan shader module!");
-        free(code);
+        for (uint32_t i = 0; i < 2; ++i) {
+                size_t code_size = 0;
+                uint32_t *code = get_shader_code(paths[i], &code_size);
+                VkShaderModuleCreateInfo mdlinfo = {};
+                mdlinfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+                mdlinfo.codeSize = code_size;
+                mdlinfo.pCode = code;
+
+                infos[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+                infos[i].flags = 0;
+                infos[i].pName = "main";
+                infos[i].pNext = NULL;
+                infos[i].pSpecializationInfo = NULL;
+                infos[i].stage = stages[i];
+                assert_vulkan(vkCreateShaderModule(device, &mdlinfo, NULL,
+                        &infos[i].module),
+                        "Failed to create a Vulkan shader module!");
+                free(code);
+        }
+}
+
+static void destroy_shader_infos(const VkDevice device,
+        VkPipelineShaderStageCreateInfo infos[2])
+{    
+        vkDestroyShaderModule(device, infos[0].module, NULL);
+        vkDestroyShaderModule(device, infos[1].module, NULL);    
 }
 
 /* 
@@ -488,10 +641,7 @@ static void create_graphics_pipeline(struct Renderer *renderer)
 
         uint32_t shdrcount = 2;
         VkPipelineShaderStageCreateInfo shdrinfos[shdrcount];
-        create_shader_info("../include/shader/basic_vs.spv",
-                VK_SHADER_STAGE_VERTEX_BIT, renderer->device, &shdrinfos[0]);
-        create_shader_info("../include/shader/basic_fs.spv",
-                VK_SHADER_STAGE_FRAGMENT_BIT, renderer->device, &shdrinfos[1]);
+        create_shader_infos(renderer->device, shdrinfos);
 
         VkPipelineVertexInputStateCreateInfo vrtinput_info = {};
         vrtinput_info.sType =
@@ -536,158 +686,22 @@ static void create_graphics_pipeline(struct Renderer *renderer)
         vkDestroyShaderModule(renderer->device, shdrinfos[1].module, NULL);
 }
 
-static void destroy_image_views(struct Renderer *renderer)
+// renderer->command_pool should be cleaned up by vkDestroyCommandPool()
+static void create_command_pool(const uint32_t graphics_index,
+        struct Renderer *renderer)
 {
-        for (uint32_t i = 0; i < renderer->image_count; ++i) {
-                vkDestroyImageView(renderer->device, renderer->image_views[i],
-                        NULL);
-        }
+        VkCommandPoolCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        info.queueFamilyIndex = graphics_index;
 
-        free(renderer->image_views);
+        assert_vulkan(vkCreateCommandPool(renderer->device, &info, NULL,
+                &renderer->command_pool),
+                "Failed to create a Vulkan command pool!");
 }
 
-static void destroy_swapchain_details(struct SwapchainDetails *details)
+static void create_command_buffers(struct Renderer *renderer)
 {
-        free(details->surface_formats);
-        free(details->present_modes);
-}
 
-static int is_queue_families_complete(const VkSurfaceKHR surface,
-        const VkPhysicalDevice gpu, struct QueueFamilyIndices *indices)
-{
-        uint32_t famcount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &famcount, NULL);
-
-        VkQueueFamilyProperties families[famcount];
-        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &famcount, families);
-
-        indices->graphics = -1;
-        indices->present = -1;
-
-        for (uint32_t i = 0; i < famcount; ++i) {
-                if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-                        indices->graphics = i;
-                
-                VkBool32 prsntsupport = 0;
-                vkGetPhysicalDeviceSurfaceSupportKHR(gpu, i, surface,
-                        &prsntsupport);
-
-                if (prsntsupport)
-                        indices->present = i;
-        }
-
-        return indices->graphics >= 0 && indices->present >= 0;
-}
-
-static int is_device_extensions_support(const VkPhysicalDevice gpu)
-{
-        uint32_t extcount = 0;
-        vkEnumerateDeviceExtensionProperties(gpu, NULL, &extcount, NULL);
-
-        VkExtensionProperties exts[extcount];
-        vkEnumerateDeviceExtensionProperties(gpu, NULL, &extcount, exts);
-
-        for (uint32_t i = 0; i < DEVICE_EXTENSION_COUNT; ++i) {
-                for (uint32_t j = 0; j < extcount; ++j) {
-                        if (strcmp(DEVICE_EXTENSIONS[i],
-                                exts[j].extensionName) == 0)
-                                goto nextExtensions;
-                }
-
-                return 0;
-
-                nextExtensions:;
-        }
-
-        return 1;
-}
-
-// details should be cleaned up by destroy_swapchain_details
-static int is_swapchain_details_complete(const VkSurfaceKHR surface,
-        const VkPhysicalDevice gpu, struct SwapchainDetails *details)
-{
-        vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, surface,
-                &details->surface_format_count, NULL);
-
-        if (details->surface_format_count == 0)
-                return 0;
-        
-        vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface,
-                &details->present_mode_count, NULL);
-
-        if (details->present_mode_count == 0)
-                return 0;
-
-        details->surface_formats = malloc(
-                sizeof(details->surface_format_count));
-        details->present_modes = malloc(sizeof(details->present_mode_count));
-
-        vkGetPhysicalDeviceSurfaceFormatsKHR(gpu, surface,
-                &details->surface_format_count, details->surface_formats);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface,
-                &details->present_mode_count, details->present_modes);
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(gpu, surface,
-                &details->capabilities);
-
-        return 1;
-}
-
-// details should be cleaned up by destroy_swapchain_details()
-static int is_gpu_suitable(const VkSurfaceKHR surface,
-        const VkPhysicalDevice gpu, struct QueueFamilyIndices *indices,
-        struct SwapchainDetails *details)
-{
-        return is_queue_families_complete(surface, gpu, indices) &&
-                is_device_extensions_support(gpu) &&
-                is_swapchain_details_complete(surface, gpu, details);
-}
-
-// details should be cleaned up by destroy_swapchain_details()
-static void select_gpu(struct Renderer *renderer,
-        struct QueueFamilyIndices *indices, struct SwapchainDetails *details)
-{
-        uint32_t gpucount = 0;
-        vkEnumeratePhysicalDevices(renderer->instance, &gpucount, NULL);
-
-        VkPhysicalDevice gpus[gpucount];
-        vkEnumeratePhysicalDevices(renderer->instance, &gpucount, gpus);
-
-        for (uint32_t i = 0; i < gpucount; ++i) {
-                if (is_gpu_suitable(renderer->surface, gpus[i], indices,
-                        details)) {
-                        renderer->gpu = gpus[i];
-                        return;
-                }
-        }
-
-        printf("Failed to select a suitable GPU!");
-        exit(-1);
-}
-
-void run_renderer(const struct Renderer *renderer)
-{
-        while (!glfwWindowShouldClose(renderer->window)) {
-                glfwPollEvents();
-        }
-}
-
-void destroy_renderer(struct Renderer *renderer)
-{
-        vkDestroyPipeline(renderer->device, renderer->graphics_pipeline, NULL);
-        vkDestroyPipelineLayout(renderer->device, renderer->pipeline_layout,
-                NULL);
-        vkDestroyRenderPass(renderer->device, renderer->render_pass, NULL);
-        destroy_image_views(renderer);
-        vkDestroySwapchainKHR(renderer->device, renderer->swapchain, NULL);
-        vkDestroyDevice(renderer->device, NULL);
-        vkDestroySurfaceKHR(renderer->instance, renderer->surface, NULL);
-#ifndef NDEBUG
-        destroy_debug_messenger(renderer);
-#endif
-        vkDestroyInstance(renderer->instance, NULL);
-        glfwDestroyWindow(renderer->window);
-        glfwTerminate();
-        free(renderer);
 }
 
 // should be cleaned up by destroy_renderer()
@@ -710,6 +724,34 @@ struct Renderer *create_renderer()
         destroy_swapchain_details(&details);
         create_render_pass(renderer);
         create_graphics_pipeline(renderer);
+        create_command_pool(indices.graphics, renderer);
 
         return renderer;
+}
+
+void run_renderer(const struct Renderer *renderer)
+{
+        while (!glfwWindowShouldClose(renderer->window)) {
+                glfwPollEvents();
+        }
+}
+
+void destroy_renderer(struct Renderer *renderer)
+{
+        vkDestroyCommandPool(renderer->device, renderer->command_pool, NULL);
+        vkDestroyPipeline(renderer->device, renderer->graphics_pipeline, NULL);
+        vkDestroyPipelineLayout(renderer->device, renderer->pipeline_layout,
+                NULL);
+        vkDestroyRenderPass(renderer->device, renderer->render_pass, NULL);
+        destroy_image_views(renderer);
+        vkDestroySwapchainKHR(renderer->device, renderer->swapchain, NULL);
+        vkDestroyDevice(renderer->device, NULL);
+        vkDestroySurfaceKHR(renderer->instance, renderer->surface, NULL);
+#ifndef NDEBUG
+        destroy_debug_messenger(renderer);
+#endif
+        vkDestroyInstance(renderer->instance, NULL);
+        glfwDestroyWindow(renderer->window);
+        glfwTerminate();
+        free(renderer);
 }
