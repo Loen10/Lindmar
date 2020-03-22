@@ -11,7 +11,7 @@
 #define HEIGHT 720
 #define DEVICE_EXTENSION_COUNT 1
 static const char* const DEVICE_EXTENSIONS[] = { 
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME 
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
 struct Renderer {
@@ -28,12 +28,17 @@ struct Renderer {
         VkQueue graphics_queue;
         VkQueue present_queue;
         VkSurfaceFormatKHR surface_format;
+        VkExtent2D extent;
         VkSwapchainKHR swapchain;
         VkRenderPass render_pass;
         VkPipelineLayout pipeline_layout;
         VkPipeline graphics_pipeline;
         VkCommandPool command_pool;
         VkCommandBuffer *command_buffers;
+        VkFramebuffer *framebuffers;
+        VkSemaphore rendered_semaphore;
+        VkSemaphore presented_semaphore;
+        VkFence *fences;
 };
 
 struct QueueFamilyIndices {
@@ -323,8 +328,10 @@ static void create_device(const struct QueueFamilyIndices *indices,
         assert_vulkan(vkCreateDevice(renderer->gpu, &info, NULL,
                 &renderer->device), "Failed to create a Vulkan device");
 
-        vkGetDeviceQueue(renderer->device, indices->graphics, 0, &renderer->graphics_queue);
-        vkGetDeviceQueue(renderer->device, indices->present, 0, &renderer->present_queue);
+        vkGetDeviceQueue(renderer->device, indices->graphics, 0,
+                &renderer->graphics_queue);
+        vkGetDeviceQueue(renderer->device, indices->present, 0,
+                &renderer->present_queue);
         
         free(qinfos);
 }
@@ -418,8 +425,7 @@ static void create_swapchain(const struct QueueFamilyIndices *indices,
         select_surface_format(details->surface_format_count,
                 details->surface_formats, &renderer->surface_format);
         
-        VkExtent2D extent;
-        select_extent(&details->capabilities, WIDTH, HEIGHT, &extent);
+        select_extent(&details->capabilities, WIDTH, HEIGHT, &renderer->extent);
 
         uint32_t qindex_count = 0;
         VkSharingMode shrmode;
@@ -435,7 +441,7 @@ static void create_swapchain(const struct QueueFamilyIndices *indices,
         info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         info.imageArrayLayers = 1;
         info.imageColorSpace = renderer->surface_format.colorSpace;
-        info.imageExtent = extent;
+        info.imageExtent = renderer->extent;
         info.imageFormat = renderer->surface_format.format;
         info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         info.minImageCount = select_image_count(&details->capabilities);
@@ -509,6 +515,14 @@ static void create_render_pass(struct Renderer *renderer)
         attchref.attachment = 0;
         attchref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+        VkSubpassDependency depend = {};
+        depend.srcSubpass = VK_SUBPASS_EXTERNAL;
+        depend.dstSubpass = 0;
+        depend.srcAccessMask = 0;
+        depend.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        depend.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        depend.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
         VkSubpassDescription subpass = {};
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &attchref;
@@ -520,6 +534,8 @@ static void create_render_pass(struct Renderer *renderer)
         info.pAttachments = &attachment;
         info.pSubpasses = &subpass;
         info.subpassCount = 1;
+        info.dependencyCount = 1;
+        info.pDependencies = &depend;
 
         assert_vulkan(vkCreateRenderPass(renderer->device, &info, NULL,
                 &renderer->render_pass),
@@ -577,7 +593,8 @@ static void create_shader_infos(const VkDevice device,
                 mdlinfo.codeSize = code_size;
                 mdlinfo.pCode = code;
 
-                infos[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+                infos[i].sType = 
+                        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
                 infos[i].flags = 0;
                 infos[i].pName = "main";
                 infos[i].pNext = NULL;
@@ -686,7 +703,37 @@ static void create_graphics_pipeline(struct Renderer *renderer)
         vkDestroyShaderModule(renderer->device, shdrinfos[1].module, NULL);
 }
 
-// renderer->command_pool should be cleaned up by vkDestroyCommandPool()
+// renderer->framebuffers should be cleaned up by destroy_framebuffers()
+static void create_framebuffers(struct Renderer *renderer)
+{
+        renderer->framebuffers = malloc(renderer->image_count * sizeof(VkFramebuffer));
+        
+        for (uint32_t i = 0; i < renderer->image_count; ++i) {
+                VkFramebufferCreateInfo info = {};
+                info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                info.attachmentCount = 1;
+                info.height = renderer->extent.height;
+                info.width = renderer->extent.width;
+                info.layers = 1;
+                info.pAttachments = &renderer->image_views[i];
+                info.renderPass = renderer->render_pass;
+
+                assert_vulkan(vkCreateFramebuffer(renderer->device, &info,
+                        NULL, &renderer->framebuffers[i]),
+                        "Failed to create a Vulkan framebuffer!");
+        }
+}
+
+static void destroy_framebuffers(struct Renderer *renderer)
+{
+        for (uint32_t i = 0; i < renderer->image_count; ++i) {
+                vkDestroyFramebuffer(renderer->device, renderer->framebuffers[i], NULL);
+        }
+
+        free(renderer->framebuffers);
+}
+
+// renderer->command_pool should be cleaned up by destroy_command_pool()
 static void create_command_pool(const uint32_t graphics_index,
         struct Renderer *renderer)
 {
@@ -699,12 +746,99 @@ static void create_command_pool(const uint32_t graphics_index,
                 "Failed to create a Vulkan command pool!");
 }
 
+// renderer->command_buffers should be cleaned up by destroy_command_pool()
 static void create_command_buffers(struct Renderer *renderer)
 {
-
+        renderer->command_buffers = malloc(
+                renderer->image_count * sizeof(VkCommandBuffer));
+        VkCommandBufferAllocateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        info.commandBufferCount = renderer->image_count;
+        info.commandPool = renderer->command_pool;
+        info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        
+        assert_vulkan(vkAllocateCommandBuffers(renderer->device, &info,
+                renderer->command_buffers),
+                "Failed to allocate Vulkan command buffers!");
 }
 
-// should be cleaned up by destroy_renderer()
+static void record_command_buffers(struct Renderer *renderer) 
+{
+        for (uint32_t i = 0; i < renderer->image_count; ++i) {
+                VkCommandBufferBeginInfo bgninfo = {};
+                bgninfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                
+                const VkCommandBuffer buffer = renderer->command_buffers[i];
+
+                assert_vulkan(vkBeginCommandBuffer(buffer, &bgninfo),
+                        "Failed to begin a Vulkan command buffer!");
+
+                VkClearValue clear = {0.0f, 0.0f, 0.0f, 1.0f};
+                VkRenderPassBeginInfo rndrbegin = {};
+                rndrbegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                rndrbegin.clearValueCount = 1;
+                rndrbegin.framebuffer = renderer->framebuffers[i];
+                rndrbegin.pClearValues = &clear;
+                rndrbegin.renderArea.extent = renderer->extent;
+                rndrbegin.renderArea.offset.x = 0;
+                rndrbegin.renderArea.offset.y = 0;
+                rndrbegin.renderPass = renderer->render_pass;
+
+                vkCmdBeginRenderPass(buffer, &rndrbegin, VK_SUBPASS_CONTENTS_INLINE);
+                vkCmdBindPipeline(buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        renderer->graphics_pipeline);
+                vkCmdDraw(buffer, 3, 1, 0, 0);
+                vkCmdEndRenderPass(buffer);
+                assert_vulkan(vkEndCommandBuffer(buffer),
+                        "Failed to end a Vulkan command buffer!");
+        }
+}
+
+static void destroy_command_pool(struct Renderer *renderer)
+{
+        vkDestroyCommandPool(renderer->device, renderer->command_pool, NULL);
+        free(renderer->command_buffers);
+}
+
+// Should be cleaned up by destroy_sync_objects()
+static void create_sync_objects(struct Renderer *renderer)
+{      
+        renderer->fences = malloc(renderer->image_count * sizeof(VkFence));
+
+        VkSemaphoreCreateInfo seminfo = {};
+        seminfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        assert_vulkan(vkCreateSemaphore(renderer->device, &seminfo, NULL,
+                &renderer->rendered_semaphore),
+                "Failed to create a Vulkan image acquired semaphore!");
+        assert_vulkan(vkCreateSemaphore(renderer->device, &seminfo, NULL,
+                &renderer->presented_semaphore),
+                "Failed to create a Vulkan render finished semaphore!");
+
+        VkFenceCreateInfo feninfo = {};
+        feninfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        feninfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        
+        for (uint32_t i = 0; i < renderer->image_count; ++i) {
+                assert_vulkan(vkCreateFence(renderer->device, &feninfo, NULL,
+                        &renderer->fences[i]), "Failed to create a Vulkan fence!");
+        }
+}
+
+static void destroy_sync_objects(struct Renderer *renderer)
+{
+        vkDestroySemaphore(renderer->device,
+                renderer->rendered_semaphore, NULL);
+        vkDestroySemaphore(renderer->device,
+                renderer->presented_semaphore, NULL);
+
+        for (uint32_t i = 0; i < renderer->image_count; ++i) {
+                vkDestroyFence(renderer->device, renderer->fences[i], NULL);
+        }
+
+        free(renderer->fences);
+}
+
 struct Renderer *create_renderer()
 {
         struct Renderer *renderer = malloc(sizeof(struct Renderer));
@@ -724,24 +858,63 @@ struct Renderer *create_renderer()
         destroy_swapchain_details(&details);
         create_render_pass(renderer);
         create_graphics_pipeline(renderer);
+        create_framebuffers(renderer);
         create_command_pool(indices.graphics, renderer);
+        create_command_buffers(renderer);
+        record_command_buffers(renderer);
+        create_sync_objects(renderer);
 
         return renderer;
 }
 
 void run_renderer(const struct Renderer *renderer)
 {
-        while (!glfwWindowShouldClose(renderer->window)) {
+        while (!glfwWindowShouldClose(renderer->window))
+        {
                 glfwPollEvents();
+                
+                uint32_t img = 0;
+                vkAcquireNextImageKHR(renderer->device, renderer->swapchain,
+                        UINT64_MAX, renderer->presented_semaphore, NULL, &img);
+
+                vkWaitForFences(renderer->device, 1, &renderer->fences[img], VK_TRUE, UINT64_MAX);
+                vkResetFences(renderer->device, 1, &renderer->fences[img]);
+                
+                VkPipelineStageFlagBits waitstgs = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+
+                VkSubmitInfo submit = {};
+                submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                submit.commandBufferCount = 1;
+                submit.pCommandBuffers = &renderer->command_buffers[img];
+                submit.waitSemaphoreCount = 1;
+                submit.pWaitDstStageMask = &waitstgs;
+                submit.pWaitSemaphores = &renderer->presented_semaphore;
+                submit.signalSemaphoreCount = 1;
+                submit.pSignalSemaphores = &renderer->rendered_semaphore;
+                
+                vkQueueSubmit(renderer->graphics_queue, 1, &submit, renderer->fences[img]);
+
+                VkPresentInfoKHR present = {};
+                present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+                present.waitSemaphoreCount = 1;
+                present.pWaitSemaphores = &renderer->rendered_semaphore;
+                present.swapchainCount = 1;
+                present.pSwapchains = &renderer->swapchain;
+                present.pImageIndices = &img;
+
+                vkQueuePresentKHR(renderer->present_queue, &present);
         }
+
+        vkQueueWaitIdle(renderer->graphics_queue);
 }
 
 void destroy_renderer(struct Renderer *renderer)
 {
-        vkDestroyCommandPool(renderer->device, renderer->command_pool, NULL);
+        destroy_sync_objects(renderer);
+        destroy_command_pool(renderer);
+        destroy_framebuffers(renderer);
         vkDestroyPipeline(renderer->device, renderer->graphics_pipeline, NULL);
-        vkDestroyPipelineLayout(renderer->device, renderer->pipeline_layout,
-                NULL);
+        vkDestroyPipelineLayout(renderer->device, renderer->pipeline_layout, NULL);
         vkDestroyRenderPass(renderer->device, renderer->render_pass, NULL);
         destroy_image_views(renderer);
         vkDestroySwapchainKHR(renderer->device, renderer->swapchain, NULL);
