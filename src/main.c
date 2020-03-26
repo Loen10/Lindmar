@@ -1,8 +1,8 @@
 #include "renderer.h"
 
-int main()
+int main(void)
 {
-        struct Renderer *renderer = create_renderer();
-        run_renderer(renderer);
-        destroy_renderer(renderer);
+    struct Renderer *renderer = create_renderer();
+    run_renderer(renderer);
+    destroy_renderer(renderer);
 }
