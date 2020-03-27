@@ -7,8 +7,8 @@
 #include "instance.h"
 #include "renderer.h"
 
-#define WIDTH 1280
-#define HEIGHT 720
+#define DEFAULT_WIDTH 1280u
+#define DEFAULT_HEIGHT 720u
 #define DEVICE_EXTENSION_COUNT 1
 static const char* const DEVICE_EXTENSIONS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
@@ -17,23 +17,15 @@ struct QueueFamilyIndices {
     int present;
 };
 
-struct SwapchainDetails {
-    uint32_t surface_format_count;
-    uint32_t present_mode_count;
-    VkSurfaceCapabilitiesKHR capabilities;
-    VkSurfaceFormatKHR *surface_formats;
-    VkPresentModeKHR *present_modes;
-};
-
 struct Renderer {
     GLFWwindow *window;
+    int resized;
     VkInstance instance;
 #ifndef NDEBUG
     VkDebugUtilsMessengerEXT debug_messenger;
 #endif
     VkSurfaceKHR surface;
     struct QueueFamilyIndices queue_families;
-    struct SwapchainDetails swapchain_details;
     VkPhysicalDevice gpu;
     VkDevice device;
     VkQueue graphics_queue;
@@ -54,14 +46,32 @@ struct Renderer {
     VkFence *fences;
 };
 
+struct SwapchainDetails {
+    uint32_t surface_format_count;
+    uint32_t present_mode_count;
+    VkSurfaceCapabilitiesKHR capabilities;
+    VkSurfaceFormatKHR *surface_formats;
+    VkPresentModeKHR *present_modes;
+};
+
+static void framebuffer_resize_callback(GLFWwindow *window, int width, int height)
+{
+    struct Renderer *renderer = (struct Renderer *)glfwGetWindowUserPointer(window);
+    renderer->resized = 1;
+}
+
 // renderer->window should be cleaned up by glfwDestroyWindow()
 static void create_window(struct Renderer *renderer) 
 {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    //glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-    renderer->window = glfwCreateWindow(WIDTH, HEIGHT, "Lindmar", NULL, NULL);
+    renderer->window = glfwCreateWindow(DEFAULT_WIDTH, DEFAULT_HEIGHT, "Lindmar", NULL, NULL);
+    renderer->resized = 0;
+
+    glfwSetWindowUserPointer(renderer->window, renderer);
+    glfwSetFramebufferSizeCallback(renderer->window, &framebuffer_resize_callback);
 }
 
 static void assert_vulkan(VkResult res, const char *msg) 
@@ -202,33 +212,34 @@ static int is_device_extensions_support(const VkPhysicalDevice gpu)
 }
 
 // details should be cleaned up by destroy_swapchain_details()
-static int is_swapchain_details_complete(struct Renderer *renderer)
+static int is_swapchain_details_complete(const struct Renderer *renderer,
+    struct SwapchainDetails *details)
 {
     vkGetPhysicalDeviceSurfaceFormatsKHR(renderer->gpu, renderer->surface,
-        &renderer->swapchain_details.surface_format_count, NULL);
+        &details->surface_format_count, NULL);
 
-    if (renderer->swapchain_details.surface_format_count == 0)
+    if (details->surface_format_count == 0)
         return 0;
     
     vkGetPhysicalDeviceSurfacePresentModesKHR(renderer->gpu, renderer->surface,
-        &renderer->swapchain_details.present_mode_count, NULL);
+        &details->present_mode_count, NULL);
 
-    if (renderer->swapchain_details.present_mode_count == 0)
+    if (details->present_mode_count == 0)
         return 0;
 
-    renderer->swapchain_details.surface_formats = malloc(
-        sizeof(renderer->swapchain_details.surface_format_count));
-    renderer->swapchain_details.present_modes = malloc(
-        sizeof(renderer->swapchain_details.present_mode_count));
+    details->surface_formats = malloc(
+        sizeof(details->surface_format_count));
+    details->present_modes = malloc(
+        sizeof(details->present_mode_count));
 
     vkGetPhysicalDeviceSurfaceFormatsKHR(renderer->gpu, renderer->surface,
-        &renderer->swapchain_details.surface_format_count,
-        renderer->swapchain_details.surface_formats);
+        &details->surface_format_count,
+        details->surface_formats);
     vkGetPhysicalDeviceSurfacePresentModesKHR(renderer->gpu, renderer->surface,
-        &renderer->swapchain_details.present_mode_count,
-        renderer->swapchain_details.present_modes);
+        &details->present_mode_count,
+        details->present_modes);
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(renderer->gpu, renderer->surface,
-        &renderer->swapchain_details.capabilities);
+        &details->capabilities);
 
     return 1;
 }
@@ -240,14 +251,14 @@ static void destroy_swapchain_details(struct SwapchainDetails *details)
 }
 
 // details should be cleaned up by destroy_swapchain_details()
-static int is_gpu_suitable(struct Renderer *renderer)
+static int is_gpu_suitable(struct Renderer *renderer, struct SwapchainDetails *details)
 {
     return is_queue_families_complete(renderer) && is_device_extensions_support(renderer->gpu) &&
-        is_swapchain_details_complete(renderer);
+        is_swapchain_details_complete(renderer, details);
 }
 
 // details should be cleaned up by destroy_swapchain_details()
-static void select_gpu(struct Renderer *renderer)
+static void select_gpu(struct Renderer *renderer, struct SwapchainDetails *details)
 {
     uint32_t gpucount = 0;
     vkEnumeratePhysicalDevices(renderer->instance, &gpucount, NULL);
@@ -258,7 +269,7 @@ static void select_gpu(struct Renderer *renderer)
     for (uint32_t i = 0; i < gpucount; ++i) {
         renderer->gpu = gpus[i];
 
-        if (is_gpu_suitable(renderer))
+        if (is_gpu_suitable(renderer, details))
             return;
     }
 
@@ -334,11 +345,10 @@ static void create_command_pool(struct Renderer *renderer)
 static void select_surface_format(const struct SwapchainDetails *details,
     VkSurfaceFormatKHR *surface_format)
 {
-    for (uint32_t i = 0; i < details->surface_format_count; ++i) {
-            if (details->surface_formats[i].format == VK_FORMAT_B8G8R8A8_SRGB &&
-                    details->surface_formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-                    *surface_format = details->surface_formats[i];
-    }
+    for (uint32_t i = 0; i < details->surface_format_count; ++i)
+        if (details->surface_formats[i].format == VK_FORMAT_B8G8R8A8_SRGB &&
+            details->surface_formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            *surface_format = details->surface_formats[i];
 
     *surface_format = details->surface_formats[0];
 }
@@ -353,15 +363,16 @@ static uint32_t clamp(uint32_t val, uint32_t top, uint32_t bot)
     return val;
 }
 
-static void select_extent(const VkSurfaceCapabilitiesKHR *capabilities, VkExtent2D *extent)
+static void select_extent(const struct SwapchainDetails *details, const uint32_t width,
+    const uint32_t height, struct Renderer *renderer)
 {
-    if (capabilities->currentExtent.width != UINT32_MAX)
-        *extent = capabilities->currentExtent;
+    if (details->capabilities.currentExtent.width != UINT32_MAX)
+        renderer->extent = details->capabilities.currentExtent;
 
-    extent->width = clamp(WIDTH, capabilities->maxImageExtent.width,
-        capabilities->minImageExtent.width);
-    extent->height = clamp(HEIGHT, capabilities->maxImageExtent.height,
-        capabilities->minImageExtent.height);      
+    renderer->extent.width = clamp(width, details->capabilities.maxImageExtent.width,
+        details->capabilities.minImageExtent.width);
+    renderer->extent.height = clamp(height, details->capabilities.maxImageExtent.height,
+        details->capabilities.minImageExtent.height);      
 }
 
 // Should be cleaned up free()
@@ -396,7 +407,7 @@ static uint32_t select_image_count(const VkSurfaceCapabilitiesKHR *capabilities)
     return imgcount;
 }
 
-static VkPresentModeKHR select_present_mode(struct SwapchainDetails *details)
+static VkPresentModeKHR select_present_mode(const struct SwapchainDetails *details)
 {
     for (uint32_t i = 0; i < details->present_mode_count; ++i)
         if (details->present_modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
@@ -406,16 +417,21 @@ static VkPresentModeKHR select_present_mode(struct SwapchainDetails *details)
 }
 
 // renderer->swapchain should be cleaned up by vkDestroySwapchain()
-static void create_swapchain(struct Renderer *renderer)
+static void create_swapchain(const struct SwapchainDetails *details, const uint32_t width,
+    const uint32_t height, struct Renderer *renderer)
 {
-    select_surface_format(&renderer->swapchain_details, &renderer->surface_format);
-    select_extent(&renderer->swapchain_details.capabilities, &renderer->extent);
+    select_surface_format(details, &renderer->surface_format);
+    select_extent(details, width, height, renderer);
 
+    uint32_t qindex_count = 0;
+    VkSharingMode shrmode = 0;
+    uint32_t *qindices = get_queue_indices(&renderer->queue_families, &qindex_count, &shrmode);
     VkSwapchainCreateInfoKHR info = {};
     info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     info.surface = renderer->surface;
-    info.pQueueFamilyIndices = get_queue_indices(&renderer->queue_families,
-        &info.queueFamilyIndexCount, &info.imageSharingMode);
+    info.queueFamilyIndexCount = qindex_count;
+    info.pQueueFamilyIndices = qindices;
+    info.imageSharingMode = shrmode;
     info.clipped = VK_TRUE;
     info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     info.imageArrayLayers = 1;
@@ -423,13 +439,13 @@ static void create_swapchain(struct Renderer *renderer)
     info.imageExtent = renderer->extent;
     info.imageFormat = renderer->surface_format.format;
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    info.minImageCount = select_image_count(&renderer->swapchain_details.capabilities);
-    info.presentMode = select_present_mode(&renderer->swapchain_details);
-    info.preTransform = renderer->swapchain_details.capabilities.currentTransform;
+    info.minImageCount = select_image_count(&details->capabilities);
+    info.presentMode = select_present_mode(details);
+    info.preTransform = details->capabilities.currentTransform;
 
     assert_vulkan(vkCreateSwapchainKHR(renderer->device, &info, NULL, &renderer->swapchain),
             "Failed to create a Vulkan swapchain");
-    free(info.pQueueFamilyIndices);
+    free(qindices);
 }
 
 // renderer->image_views should be cleaned up by destroy_image_views()
@@ -626,12 +642,12 @@ static void create_graphics_pipeline(struct Renderer *renderer)
     vrtinput_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     
     VkRect2D scissor = {};
-    scissor.extent.height = HEIGHT;
-    scissor.extent.width = WIDTH;
+    scissor.extent.height = renderer->extent.height;
+    scissor.extent.width = renderer->extent.width;
 
     VkViewport viewport= {};
-    viewport.height = HEIGHT;
-    viewport.width = WIDTH;
+    viewport.height = renderer->extent.height;
+    viewport.width = renderer->extent.width;
     viewport.maxDepth = 1.0f;
 
     VkPipelineViewportStateCreateInfo vwprtinfo = {};
@@ -783,10 +799,13 @@ struct Renderer *create_renderer()
     create_debug_messenger(renderer);
 #endif
     create_surface(renderer);  
-    select_gpu(renderer);
+
+    struct SwapchainDetails details;
+    select_gpu(renderer, &details);
     create_device(renderer);
     create_command_pool(renderer);
-    create_swapchain(renderer);
+    create_swapchain(&details, DEFAULT_WIDTH, DEFAULT_HEIGHT, renderer);
+    destroy_swapchain_details(&details);
     create_image_views(renderer);
     create_render_pass(renderer);
     create_graphics_pipeline(renderer);
@@ -811,14 +830,27 @@ static void destroy_swapchain_objects(struct Renderer *renderer)
 
 static void recreate_swapchain_objects(struct Renderer *renderer)
 {
+    int width, height;
+    glfwGetFramebufferSize(renderer->window, &width, &height);
+
+    while (width == 0 || height == 0) {
+        glfwGetFramebufferSize(renderer->window, &width, &height);
+        glfwWaitEvents();
+    }
+
     vkDeviceWaitIdle(renderer->device);
     destroy_swapchain_objects(renderer);
-    create_swapchain(renderer);
+
+    struct SwapchainDetails details;
+    is_swapchain_details_complete(renderer, &details);
+    create_swapchain(&details, width, height, renderer);
+    destroy_swapchain_details(&details);
     create_image_views(renderer);
     create_render_pass(renderer);
     create_graphics_pipeline(renderer);
-    create_framebuffers(renderer);
     create_command_buffers(renderer);
+    create_framebuffers(renderer);
+    record_command_buffers(renderer);
 }
 
 void run_renderer(struct Renderer *renderer)
@@ -828,8 +860,16 @@ void run_renderer(struct Renderer *renderer)
         glfwPollEvents();
         
         uint32_t img = 0;
-        vkAcquireNextImageKHR(renderer->device, renderer->swapchain, UINT64_MAX,
+        VkResult res = vkAcquireNextImageKHR(renderer->device, renderer->swapchain, UINT64_MAX,
             renderer->presented_semaphore, NULL, &img);
+
+        if (res == VK_ERROR_OUT_OF_DATE_KHR) {
+            recreate_swapchain_objects(renderer);
+            continue;
+        } else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
+            printf("Failed to acquire a swapchain image!");
+            exit(-1);
+        }
         
         VkPipelineStageFlagBits waitstgs = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
         VkSubmitInfo submit = {};
@@ -854,7 +894,16 @@ void run_renderer(struct Renderer *renderer)
         present.pSwapchains = &renderer->swapchain;
         present.pImageIndices = &img;
 
-        vkQueuePresentKHR(renderer->present_queue, &present);
+        res = vkQueuePresentKHR(renderer->present_queue, &present);
+
+        if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR || renderer->resized) {
+            renderer->resized = 0;
+
+            recreate_swapchain_objects(renderer);
+        } else if (res != VK_SUCCESS) {
+            printf("Failed to present a swapchain image!");
+            exit(-1);
+        }
     }
 
     vkDeviceWaitIdle(renderer->device);
