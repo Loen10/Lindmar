@@ -9,8 +9,7 @@
 
 #define DEFAULT_WIDTH 1280u
 #define DEFAULT_HEIGHT 720u
-#define DEVICE_EXTENSION_COUNT 1
-static const char* const DEVICE_EXTENSIONS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+#define DEVICE_EXTENSION_COUNT 1u
 
 struct QueueFamilyIndices {
     int graphics;
@@ -54,32 +53,33 @@ struct SwapchainDetails {
     VkPresentModeKHR *present_modes;
 };
 
-static void framebuffer_resize_callback(GLFWwindow *window, int width, int height)
-{
-    struct Renderer *renderer = (struct Renderer *)glfwGetWindowUserPointer(window);
-    renderer->resized = 1;
-}
-
 // renderer->window should be cleaned up by glfwDestroyWindow()
-static void create_window(struct Renderer *renderer) 
+static void create_window(struct Renderer *renderer)
 {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    //glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     renderer->window = glfwCreateWindow(DEFAULT_WIDTH, DEFAULT_HEIGHT, "Lindmar", NULL, NULL);
+}
+
+static void framebuffer_resize_callback(GLFWwindow *window, int width, int height)
+{
+    int *resized = (int *)glfwGetWindowUserPointer(window);
+    *resized = 1;
+}
+
+static void create_resized_callback(struct Renderer *renderer)
+{
     renderer->resized = 0;
 
-    glfwSetWindowUserPointer(renderer->window, renderer);
+    glfwSetWindowUserPointer(renderer->window, &renderer->resized);
     glfwSetFramebufferSizeCallback(renderer->window, &framebuffer_resize_callback);
 }
 
-static void assert_vulkan(VkResult res, const char *msg) 
+static void assert_vulkan(VkResult result, const char *message) 
 {
-    if (res != VK_SUCCESS) {
-        printf("%s\n", msg);
-        exit(-1);
-    }
+    if (result != VK_SUCCESS)
+        print_exit(message);
 }
 
 // renderer->instance should be cleaned up by vkDestroyInstance()
@@ -90,31 +90,24 @@ static void create_instance(struct Renderer *renderer)
     appinfo.apiVersion = VK_API_VERSION_1_0;
     appinfo.applicationVersion = VK_MAKE_VERSION(0, 0, 0);
     appinfo.pApplicationName = "Lindmar";
-    appinfo.engineVersion = VK_MAKE_VERSION(0, 0, 0);
+    appinfo.engineVersion = VK_MAKE_VERSION(0, 1, 0);
     appinfo.pEngineName = "Mountain Smithy";
-    
-    uint32_t extcount = 0;
-    const char **exts = get_instance_extensions(&extcount);
-
-#ifndef NDEBUG
-    assert_layers_support();
-#endif
 
     VkInstanceCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     info.pApplicationInfo = &appinfo;
-    info.enabledExtensionCount = extcount;
-    info.ppEnabledExtensionNames = exts;
+    info.ppEnabledExtensionNames = create_instance_extensions(&info.enabledExtensionCount);
 #ifndef NDEBUG
+    const char *layers[LAYER_COUNT];
+    get_layers(layers);
+
     info.enabledLayerCount = LAYER_COUNT;
-    info.ppEnabledLayerNames = LAYERS;
+    info.ppEnabledLayerNames = layers;
 #endif
 
-    assert_vulkan(vkCreateInstance(&info, NULL, &renderer->instance),
-        "Failed to create a Vulkan instance!");
-
+    assert_vulkan(vkCreateInstance(&info, NULL, &renderer->instance), "Failed to create a Vulkan instance!");
 #ifndef NDEBUG
-    free(exts);
+    free((void *)info.ppEnabledExtensionNames);
 #endif
 }
 
@@ -133,10 +126,10 @@ static void create_debug_messenger(struct Renderer *renderer)
     VkDebugUtilsMessengerCreateInfoEXT info = {};
     info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
     info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
-            VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-            VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT;
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT;
     info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT |
-            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
+        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
     info.pfnUserCallback = &debug_callback;
 
     PFN_vkCreateDebugUtilsMessengerEXT func = 
@@ -147,7 +140,7 @@ static void create_debug_messenger(struct Renderer *renderer)
         "Failed to create a Vulkan debug messenger!");
 }
 
-static void destroy_debug_messenger(const struct Renderer *renderer)
+static void destroy_debug_messenger(struct Renderer *renderer)
 {
     PFN_vkDestroyDebugUtilsMessengerEXT func = 
         (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
@@ -189,29 +182,31 @@ static int is_queue_families_complete(struct Renderer *renderer)
     return renderer->queue_families.graphics >= 0 && renderer->queue_families.present >= 0;
 }
 
-static int is_device_extensions_support(const VkPhysicalDevice gpu)
+static int is_device_extensions_support(const struct Renderer *renderer,
+    const char *extensions[DEVICE_EXTENSION_COUNT])
 {
+    extensions[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    
     uint32_t extcount = 0;
-    vkEnumerateDeviceExtensionProperties(gpu, NULL, &extcount, NULL);
+    vkEnumerateDeviceExtensionProperties(renderer->gpu, NULL, &extcount, NULL);
 
     VkExtensionProperties exts[extcount];
-    vkEnumerateDeviceExtensionProperties(gpu, NULL, &extcount, exts);
+    vkEnumerateDeviceExtensionProperties(renderer->gpu, NULL, &extcount, exts);
 
     for (uint32_t i = 0; i < DEVICE_EXTENSION_COUNT; ++i) {
-        for (uint32_t j = 0; j < extcount; ++j) {
-            if (strcmp(DEVICE_EXTENSIONS[i], exts[j].extensionName) == 0)
+        for (uint32_t j = 0; j < extcount; ++j)
+            if (strcmp(extensions[i], exts[j].extensionName) == 0)
                 goto nextExtensions;
-        }
             
-            return 0;
+        return 0;
 
-            nextExtensions:;
+        nextExtensions:;
     }
 
     return 1;
 }
 
-// details should be cleaned up by destroy_swapchain_details()
+// True: details should be cleaned up by destroy_swapchain_details()
 static int is_swapchain_details_complete(const struct Renderer *renderer,
     struct SwapchainDetails *details)
 {
@@ -250,15 +245,19 @@ static void destroy_swapchain_details(struct SwapchainDetails *details)
     free(details->present_modes);
 }
 
-// details should be cleaned up by destroy_swapchain_details()
-static int is_gpu_suitable(struct Renderer *renderer, struct SwapchainDetails *details)
+// True: details should be cleaned up by destroy_swapchain_details()
+static int is_gpu_suitable(struct Renderer *renderer,
+    const char *extensions[DEVICE_EXTENSION_COUNT],
+    struct SwapchainDetails *details)
 {
-    return is_queue_families_complete(renderer) && is_device_extensions_support(renderer->gpu) &&
+    return is_queue_families_complete(renderer) &&
+        is_device_extensions_support(renderer, extensions) &&
         is_swapchain_details_complete(renderer, details);
 }
 
 // details should be cleaned up by destroy_swapchain_details()
-static void select_gpu(struct Renderer *renderer, struct SwapchainDetails *details)
+static void select_gpu(struct Renderer *renderer, const char *extensions[DEVICE_EXTENSION_COUNT],
+    struct SwapchainDetails *details)
 {
     uint32_t gpucount = 0;
     vkEnumeratePhysicalDevices(renderer->instance, &gpucount, NULL);
@@ -269,16 +268,15 @@ static void select_gpu(struct Renderer *renderer, struct SwapchainDetails *detai
     for (uint32_t i = 0; i < gpucount; ++i) {
         renderer->gpu = gpus[i];
 
-        if (is_gpu_suitable(renderer, details))
+        if (is_gpu_suitable(renderer, extensions, details))
             return;
     }
 
-    printf("Failed to select a suitable GPU!");
-    exit(-1);
+    print_exit("Failed to select a suitable GPU!");
 }
 
 // Should be cleaned up by free()
-static VkDeviceQueueCreateInfo *get_queue_create_infos(const struct QueueFamilyIndices *indices,
+static VkDeviceQueueCreateInfo *get_queue_create_infos(const struct Renderer *renderer,
     uint32_t *count)
 {
     *count = 1;
@@ -288,11 +286,11 @@ static VkDeviceQueueCreateInfo *get_queue_create_infos(const struct QueueFamilyI
     info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     info.pQueuePriorities = &priority;
     info.queueCount = 1;
-    info.queueFamilyIndex = indices->graphics;
+    info.queueFamilyIndex = renderer->queue_families.graphics;
 
     VkDeviceQueueCreateInfo *infos;
 
-    if (indices->graphics == indices->present) {
+    if (renderer->queue_families.graphics == renderer->queue_families.present) {
         infos = malloc(*count * sizeof(VkDeviceQueueCreateInfo));
         infos[0] = info;
     } else {
@@ -300,25 +298,25 @@ static VkDeviceQueueCreateInfo *get_queue_create_infos(const struct QueueFamilyI
         infos = malloc(*count * sizeof(VkDeviceQueueCreateInfo));
         infos[0] = info;
         infos[1] = info;
-        infos[1].queueFamilyIndex = indices->present;
+        infos[1].queueFamilyIndex = renderer->queue_families.present;
     }
 
     return infos;
 }
 
 // renderer->device should be cleaned up by vkDestroyDevice()
-static void create_device(struct Renderer *renderer)
+static void create_device(const char *const extensions[DEVICE_EXTENSION_COUNT],
+    const struct SwapchainDetails *details, struct Renderer *renderer)
 {
     uint32_t qinfo_count = 0;
-    VkDeviceQueueCreateInfo *qinfos = get_queue_create_infos(&renderer->queue_families,
-        &qinfo_count);
+    VkDeviceQueueCreateInfo *qinfos = get_queue_create_infos(renderer, &qinfo_count);
 
     VkPhysicalDeviceFeatures features = {};
     VkDeviceCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     info.pEnabledFeatures = &features;
     info.enabledExtensionCount = DEVICE_EXTENSION_COUNT;
-    info.ppEnabledExtensionNames = DEVICE_EXTENSIONS;
+    info.ppEnabledExtensionNames = extensions;
     info.queueCreateInfoCount = qinfo_count;
     info.pQueueCreateInfos = qinfos;
     
@@ -343,14 +341,17 @@ static void create_command_pool(struct Renderer *renderer)
 }
 
 static void select_surface_format(const struct SwapchainDetails *details,
-    VkSurfaceFormatKHR *surface_format)
+    struct Renderer *renderer)
 {
-    for (uint32_t i = 0; i < details->surface_format_count; ++i)
+    for (uint32_t i = 0; i < details->surface_format_count; ++i) {
         if (details->surface_formats[i].format == VK_FORMAT_B8G8R8A8_SRGB &&
-            details->surface_formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-            *surface_format = details->surface_formats[i];
+            details->surface_formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            renderer->surface_format = details->surface_formats[i];
+            return;
+        }
+    }
 
-    *surface_format = details->surface_formats[0];
+    renderer->surface_format = details->surface_formats[0];
 }
 
 static uint32_t clamp(uint32_t val, uint32_t top, uint32_t bot)
@@ -363,11 +364,13 @@ static uint32_t clamp(uint32_t val, uint32_t top, uint32_t bot)
     return val;
 }
 
-static void select_extent(const struct SwapchainDetails *details, const uint32_t width,
-    const uint32_t height, struct Renderer *renderer)
+static void select_extent(const uint32_t width, const uint32_t height,
+    const struct SwapchainDetails *details, struct Renderer *renderer)
 {
-    if (details->capabilities.currentExtent.width != UINT32_MAX)
+    if (details->capabilities.currentExtent.width != UINT32_MAX) {
         renderer->extent = details->capabilities.currentExtent;
+        return;
+    }
 
     renderer->extent.width = clamp(width, details->capabilities.maxImageExtent.width,
         details->capabilities.minImageExtent.width);
@@ -376,12 +379,12 @@ static void select_extent(const struct SwapchainDetails *details, const uint32_t
 }
 
 // Should be cleaned up free()
-static uint32_t *get_queue_indices(const struct QueueFamilyIndices *indices, uint32_t *count,
+static uint32_t *create_queue_indices(const struct Renderer *renderer, uint32_t *count,
     VkSharingMode *sharing_mode)
 {
     uint32_t *qindices;
 
-    if (indices->graphics == indices->present) {
+    if (renderer->queue_families.graphics == renderer->queue_families.present) {
         *count = 0;
         *sharing_mode = VK_SHARING_MODE_EXCLUSIVE;
         qindices = NULL;
@@ -389,20 +392,19 @@ static uint32_t *get_queue_indices(const struct QueueFamilyIndices *indices, uin
         *count = 2;
         *sharing_mode = VK_SHARING_MODE_CONCURRENT;
         qindices = malloc(*count * sizeof(uint32_t));
-        qindices[0] = indices->graphics;
-        qindices[1] = indices->present;
+        qindices[0] = renderer->queue_families.graphics;
+        qindices[1] = renderer->queue_families.present;
     }
 
-    return qindices;    
+    return qindices;
 }
 
-static uint32_t select_image_count(const VkSurfaceCapabilitiesKHR *capabilities)
+static uint32_t select_image_count(const struct SwapchainDetails *details)
 {
-    uint32_t imgcount = capabilities->minImageCount + 1;
+    uint32_t imgcount = details->capabilities.minImageCount + 1;
 
-    if (capabilities->maxImageCount > 0 &&
-        imgcount > capabilities->maxImageCount)
-        imgcount = capabilities->maxImageCount;
+    if (details->capabilities.maxImageCount > 0 && imgcount > details->capabilities.maxImageCount)
+        imgcount = details->capabilities.maxImageCount;
 
     return imgcount;
 }
@@ -417,21 +419,17 @@ static VkPresentModeKHR select_present_mode(const struct SwapchainDetails *detai
 }
 
 // renderer->swapchain should be cleaned up by vkDestroySwapchain()
-static void create_swapchain(const struct SwapchainDetails *details, const uint32_t width,
-    const uint32_t height, struct Renderer *renderer)
+static void create_swapchain(const uint32_t width, const uint32_t height,
+    const struct SwapchainDetails *details, struct Renderer *renderer)
 {
-    select_surface_format(details, &renderer->surface_format);
-    select_extent(details, width, height, renderer);
+    select_surface_format(details, renderer);
+    select_extent(width, height, details, renderer);
 
-    uint32_t qindex_count = 0;
-    VkSharingMode shrmode = 0;
-    uint32_t *qindices = get_queue_indices(&renderer->queue_families, &qindex_count, &shrmode);
     VkSwapchainCreateInfoKHR info = {};
     info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     info.surface = renderer->surface;
-    info.queueFamilyIndexCount = qindex_count;
-    info.pQueueFamilyIndices = qindices;
-    info.imageSharingMode = shrmode;
+    info.pQueueFamilyIndices = create_queue_indices(renderer, &info.queueFamilyIndexCount,
+        &info.imageSharingMode);
     info.clipped = VK_TRUE;
     info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     info.imageArrayLayers = 1;
@@ -439,13 +437,13 @@ static void create_swapchain(const struct SwapchainDetails *details, const uint3
     info.imageExtent = renderer->extent;
     info.imageFormat = renderer->surface_format.format;
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    info.minImageCount = select_image_count(&details->capabilities);
+    info.minImageCount = select_image_count(details);
     info.presentMode = select_present_mode(details);
     info.preTransform = details->capabilities.currentTransform;
 
     assert_vulkan(vkCreateSwapchainKHR(renderer->device, &info, NULL, &renderer->swapchain),
-            "Failed to create a Vulkan swapchain");
-    free(qindices);
+        "Failed to create a Vulkan swapchain");
+    free((void *)info.pQueueFamilyIndices);
 }
 
 // renderer->image_views should be cleaned up by destroy_image_views()
@@ -800,11 +798,12 @@ struct Renderer *create_renderer()
 #endif
     create_surface(renderer);  
 
+    const char *device_extensions[DEVICE_EXTENSION_COUNT];
     struct SwapchainDetails details;
-    select_gpu(renderer, &details);
-    create_device(renderer);
+    select_gpu(renderer, device_extensions, &details);
+    create_device(device_extensions, &details, renderer);
     create_command_pool(renderer);
-    create_swapchain(&details, DEFAULT_WIDTH, DEFAULT_HEIGHT, renderer);
+    create_swapchain(DEFAULT_WIDTH, DEFAULT_HEIGHT, &details, renderer);
     destroy_swapchain_details(&details);
     create_image_views(renderer);
     create_render_pass(renderer);
@@ -842,8 +841,11 @@ static void recreate_swapchain_objects(struct Renderer *renderer)
     destroy_swapchain_objects(renderer);
 
     struct SwapchainDetails details;
-    is_swapchain_details_complete(renderer, &details);
-    create_swapchain(&details, width, height, renderer);
+
+    if (!is_swapchain_details_complete(renderer, &details))
+        print_exit("Failed to complete swapchain details!");
+
+    create_swapchain(width, height, &details, renderer);
     destroy_swapchain_details(&details);
     create_image_views(renderer);
     create_render_pass(renderer);
