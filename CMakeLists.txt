@@ -5,8 +5,9 @@ project(Lindmar CXX)
 add_executable(
     Lindmar
     src/Main.cpp
-    src/render/Renderer.cpp
     src/render/util.cpp
+    src/render/Renderer.cpp
+    src/render/Instance.cpp
 )
 
 target_compile_features(Lindmar PUBLIC cxx_std_17)
