@@ -5,16 +5,12 @@
 #include <glfw/glfw3.h>
 
 #include "instance.h"
+#include "queue_family_indices.h"
 #include "renderer.h"
 
 #define DEFAULT_WIDTH 1280u
 #define DEFAULT_HEIGHT 720u
 #define DEVICE_EXTENSION_COUNT 1u
-
-struct QueueFamilyIndices {
-    int graphics;
-    int present;
-};
 
 struct Renderer {
     GLFWwindow *window;
@@ -157,29 +153,30 @@ static void create_surface(struct Renderer *renderer)
         &renderer->surface), "Failed to create a Vulkan surface!");
 }
 
-static int is_queue_families_complete(struct Renderer *renderer)
+int is_queue_families_complete(const VkPhysicalDevice gpu, const VkSurfaceKHR surface,
+    struct QueueFamilyIndices *indices)
 {
     uint32_t famcount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(renderer->gpu, &famcount, NULL);
+    vkGetPhysicalDeviceQueueFamilyProperties(gpu, &famcount, NULL);
 
     VkQueueFamilyProperties families[famcount];
-    vkGetPhysicalDeviceQueueFamilyProperties(renderer->gpu, &famcount, families);
+    vkGetPhysicalDeviceQueueFamilyProperties(gpu, &famcount, families);
 
-    renderer->queue_families.graphics = -1;
-    renderer->queue_families.present = -1;
+    indices->graphics = -1;
+    indices->present = -1;
 
     for (uint32_t i = 0; i < famcount; ++i) {
         if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-            renderer->queue_families.graphics = i;
+            indices->graphics = i;
         
         VkBool32 presentspprt = 0;
-        vkGetPhysicalDeviceSurfaceSupportKHR(renderer->gpu, i, renderer->surface, &presentspprt);
+        vkGetPhysicalDeviceSurfaceSupportKHR(gpu, i, surface, &presentspprt);
 
         if (presentspprt)
-            renderer->queue_families.present = i;
+            indices->present = i;
     }
 
-    return renderer->queue_families.graphics >= 0 && renderer->queue_families.present >= 0;
+    return indices->graphics >= 0 && indices->present >= 0;
 }
 
 static int is_device_extensions_support(const struct Renderer *renderer,
