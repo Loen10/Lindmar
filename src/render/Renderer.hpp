@@ -2,13 +2,14 @@
 
 #include <vector>
 #include <array>
-#define GLFW_INCLUDE_VULKAN
+#include <vulkan/vulkan.h>
 #include <glfw/glfw3.h>
 
 #include <memory>
 
 #include "util.hpp"
 #include "Instance.hpp"
+#include "DebugMessenger.hpp"
 
 namespace lmar::render
 {
@@ -19,6 +20,9 @@ namespace lmar::render
 
         std::unique_ptr<GLFWwindow, util::WindowDeleter> window;
         Instance instance;
+    #ifndef NDEBUG
+        DebugMessenger debugMessenger;
+    #endif
     public:
         Renderer();
 

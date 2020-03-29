@@ -8,6 +8,7 @@ add_executable(
     src/render/util.cpp
     src/render/Renderer.cpp
     src/render/Instance.cpp
+    src/render/DebugMessenger.cpp
 )
 
 target_compile_features(Lindmar PUBLIC cxx_std_17)

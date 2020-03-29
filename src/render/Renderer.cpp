@@ -5,6 +5,9 @@
 using namespace lmar::render;
 
 Renderer::Renderer() : window{createWindow()}
+#ifndef NDEBUG
+    , debugMessenger{instance},
+#endif
 {
     run();
 }

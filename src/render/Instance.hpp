@@ -16,9 +16,12 @@ namespace lmar::render
         using Layers = std::array<const char*, 1>;
     #endif
 
-        std::unique_ptr<VkInstance_T, util::InstanceDeleter> handle;
+        VkInstance handle;
     public:
         Instance() : handle{createInstance()} {};
+        ~Instance() { vkDestroyInstance(handle, nullptr); };
+
+        operator VkInstance() const { return handle; };
     private:
         std::vector<const char*> getInstanceExtensions() const;
         VkInstance createInstance() const;

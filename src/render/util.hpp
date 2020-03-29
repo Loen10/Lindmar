@@ -12,10 +12,5 @@ namespace lmar::render::util
         void operator()(GLFWwindow* window) { glfwDestroyWindow(window); };
     };
 
-    struct InstanceDeleter
-    {
-        void operator()(VkInstance instance) { vkDestroyInstance(instance, nullptr); };
-    };
-
     void assertVulkan(VkResult res, const char* msg);
 }
