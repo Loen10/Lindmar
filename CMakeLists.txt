@@ -5,9 +5,10 @@ project(Lindmar CXX)
 add_executable(
     Lindmar
     src/Main.cpp
-    src/render/util.cpp
     src/render/Renderer.cpp
+    src/render/Window.cpp
     src/render/Instance.cpp
+    src/render/Util.cpp
     src/render/DebugMessenger.cpp
 )
 

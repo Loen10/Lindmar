@@ -1,16 +1,28 @@
 #include <cstring>
+#include <glfw/glfw3.h>
 
+#include "Util.hpp"
 #include "Instance.hpp"
 
 using namespace lmar::render;
 
-std::vector<const char*> Instance::getInstanceExtensions() const
+struct InstanceDeleter
+{
+    inline void operator()(VkInstance instance) { vkDestroyInstance(instance, nullptr); };
+};
+
+Instance::Instance()
+    : mHandle{createInstance(), InstanceDeleter{}}
+{
+
+}
+
+std::vector<const char*> Instance::getExtensions() const
 {
     uint32_t glfwExtensionCount = 0;
-    const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+    auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-    std::vector<const char*> extensions{glfwExtensions,
-        glfwExtensions + glfwExtensionCount};
+    std::vector<const char*> extensions{glfwExtensions, glfwExtensions + glfwExtensionCount};
 
 #ifndef NDEBUG
     extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -19,8 +31,9 @@ std::vector<const char*> Instance::getInstanceExtensions() const
     vkEnumerateInstanceExtensionProperties(nullptr, &availableExtensionCount, nullptr);
 
     std::vector<VkExtensionProperties> availableExtensions{availableExtensionCount};
-    vkEnumerateInstanceExtensionProperties(nullptr, &availableExtensionCount, availableExtensions.data());
-
+    vkEnumerateInstanceExtensionProperties(nullptr, &availableExtensionCount,
+        availableExtensions.data());
+    
     for (const auto& extension : extensions)
     {
         for (const auto& availableExtension : availableExtensions)
@@ -31,7 +44,7 @@ std::vector<const char*> Instance::getInstanceExtensions() const
             }
         }
 
-        throw std::runtime_error{"Failed to locate a required Vulkan instance extensions!"};
+        throw std::runtime_error{"Failed to locate a required Vulkan instance extension!"};
 
         nextExtension:;
     }
@@ -40,43 +53,10 @@ std::vector<const char*> Instance::getInstanceExtensions() const
     return extensions;
 }
 
-VkInstance Instance::createInstance() const
+#ifndef NDEBUG
+Layers Instance::getLayers() const
 {
-    VkApplicationInfo appInfo{};
-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.apiVersion = VK_API_VERSION_1_0;
-    appInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 0);
-    appInfo.engineVersion = VK_MAKE_VERSION(0, 1, 1);
-    appInfo.pApplicationName = "Lindmar";
-    appInfo.pEngineName = "Mountain Smithy";
-    
-    auto extensions = getInstanceExtensions();
-#ifndef NDEBUG
-    Layers layers;
-    initLayers(layers);
-#endif
-
-    VkInstanceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    createInfo.pApplicationInfo = &appInfo;
-    createInfo.enabledExtensionCount = extensions.size();
-    createInfo.ppEnabledExtensionNames = extensions.data();
-#ifndef NDEBUG
-    createInfo.enabledLayerCount = layers.size();
-    createInfo.ppEnabledLayerNames = layers.data();
-#endif
-
-    VkInstance instance;
-    util::assertVulkan(vkCreateInstance(&createInfo, nullptr, &instance),
-        "Failed to create a Vulkan instance");
-
-    return instance;
-}
-
-#ifndef NDEBUG
-void Instance::initLayers(Layers& layers) const
-{
-    layers[0] = "VK_LAYER_LUNARG_standard_validation";
+    constexpr Layers layers{"VK_LAYER_LUNARG_standard_validation"};
 
     uint32_t availableLayerCount = 0;
     vkEnumerateInstanceLayerProperties(&availableLayerCount, nullptr);
@@ -98,5 +78,39 @@ void Instance::initLayers(Layers& layers) const
 
         nextLayer:;
     }
+
+    return layers;
 }
 #endif
+
+VkInstance Instance::createInstance() const
+{
+    VkApplicationInfo appInfo{};
+    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    appInfo.apiVersion = VK_API_VERSION_1_0;
+    appInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 0);
+    appInfo.pApplicationName = "Lindmar";
+    appInfo.engineVersion = VK_MAKE_VERSION(0, 2, 0);
+    appInfo.pEngineName = "Mountain Smithy";
+
+    auto extensions = getExtensions();
+#ifndef NDEBUG
+    auto layers = getLayers();
+#endif
+
+    VkInstanceCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    createInfo.pApplicationInfo = &appInfo;
+    createInfo.enabledExtensionCount = extensions.size();
+    createInfo.ppEnabledExtensionNames = extensions.data();
+#ifndef NDEBUG
+    createInfo.enabledLayerCount = layers.size();
+    createInfo.ppEnabledLayerNames = layers.data();
+#endif
+
+    VkInstance instance;
+    AssertVulkan(vkCreateInstance(&createInfo, nullptr, &instance),
+        "Failed to create a Vulkan instance!");
+
+    return instance;
+}

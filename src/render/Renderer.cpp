@@ -1,12 +1,12 @@
-#include <cstring>
+
 
 #include "Renderer.hpp"
 
 using namespace lmar::render;
 
-Renderer::Renderer() : window{createWindow()}
+Renderer::Renderer()
 #ifndef NDEBUG
-    , debugMessenger{instance},
+    : mDebugMessenger{mInstance}
 #endif
 {
     run();
@@ -14,17 +14,8 @@ Renderer::Renderer() : window{createWindow()}
 
 void Renderer::run()
 {
-    while (!glfwWindowShouldClose(window.get()))
+    while (!mWindow.shouldClose())
     {
         glfwPollEvents();
     }
-}
-
-GLFWwindow* Renderer::createWindow() const
-{
-    glfwInit();
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-
-    return glfwCreateWindow(defaultWidth, defaultHeight, "Lindmar", nullptr, nullptr);
 }

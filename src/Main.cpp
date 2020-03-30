@@ -8,7 +8,7 @@ int main()
 {
     try
     {
-        Renderer renderer{};
+        Renderer renderer;
     }
     catch (const std::exception& e)
     {

@@ -1,32 +1,29 @@
 #pragma once
 
+#include <memory>
 #include <vector>
 #include <array>
-#include <memory>
 #include <vulkan/vulkan.h>
-
-#include "util.hpp"
 
 namespace lmar::render
 {
+#ifndef NDEBUG
+    using Layers = std::array<const char*, 1>;
+#endif
+
     class Instance
     {
-    private:
-    #ifndef NDEBUG
-        using Layers = std::array<const char*, 1>;
-    #endif
-
-        VkInstance handle;
     public:
-        Instance() : handle{createInstance()} {};
-        ~Instance() { vkDestroyInstance(handle, nullptr); };
+        Instance();
 
-        operator VkInstance() const { return handle; };
+        inline operator std::shared_ptr<VkInstance_T>() { return mHandle; };
     private:
-        std::vector<const char*> getInstanceExtensions() const;
+        std::shared_ptr<VkInstance_T> mHandle;
+
+        std::vector<const char*> getExtensions() const;
         VkInstance createInstance() const;
     #ifndef NDEBUG
-        void initLayers(Layers& layers) const;
+        Layers getLayers() const;
     #endif
     };
 }

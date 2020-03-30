@@ -1,17 +1,13 @@
 #ifndef NDEBUG
+#include <iostream>
 
+#include "Util.hpp"
 #include "DebugMessenger.hpp"
 
 using namespace lmar::render;
 
-DebugMessenger::~DebugMessenger()
-{
-    auto func = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
-        vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT"));
-    func(instance, handle, nullptr);
-}
-
-VkDebugUtilsMessengerEXT DebugMessenger::createDebugMessenger() const
+DebugMessenger::DebugMessenger(const std::shared_ptr<VkInstance_T>& instance)
+    : mInstance{instance}
 {
     VkDebugUtilsMessengerCreateInfoEXT createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
@@ -23,12 +19,16 @@ VkDebugUtilsMessengerEXT DebugMessenger::createDebugMessenger() const
     createInfo.pfnUserCallback = &callback;
 
     auto func = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
-        vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT"));
-    
-    VkDebugUtilsMessengerEXT debugMessenger;
-    util::assertVulkan(func(instance, &createInfo, nullptr, &debugMessenger), "Failed!");
+        vkGetInstanceProcAddr(mInstance.get(), "vkCreateDebugUtilsMessengerEXT"));
+    AssertVulkan(func(mInstance.get(), &createInfo, nullptr, &mHandle),
+        "Failed to create a Vulkan debug messenger!");
+}
 
-    return debugMessenger;
+DebugMessenger::~DebugMessenger()
+{
+    auto func = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(mInstance.get(), "vkDestroyDebugUtilsMessengerEXT"));
+    func(mInstance.get(), mHandle, nullptr);
 }
 
 VkBool32 DebugMessenger::callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,

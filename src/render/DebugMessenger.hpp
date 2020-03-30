@@ -1,26 +1,19 @@
 #pragma once
 
-#include <memory>
-#include <vulkan/vulkan.h>
-
-#include "util.hpp"
+#include "Instance.hpp"
 
 #ifndef NDEBUG
 namespace lmar::render
 {
     class DebugMessenger
     {
-    private:
-        const VkInstance instance;
-
-        VkDebugUtilsMessengerEXT handle;
     public:
-        DebugMessenger(const VkInstance instance) : instance{instance},
-            handle{createDebugMessenger()} {};
+        DebugMessenger(const std::shared_ptr<VkInstance_T>& instance);
         ~DebugMessenger();
     private:
-        VkDebugUtilsMessengerEXT createDebugMessenger() const;
-        
+        std::shared_ptr<VkInstance_T> mInstance;
+        VkDebugUtilsMessengerEXT mHandle;
+
         static VkBool32 callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
             VkDebugUtilsMessageTypeFlagsEXT messageTypes,
             const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData);
