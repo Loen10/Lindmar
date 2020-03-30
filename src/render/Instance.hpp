@@ -13,15 +13,17 @@ namespace lmar::render
 
     class Instance
     {
-    public:
+    public:        
         Instance();
+        ~Instance();
 
-        inline operator std::shared_ptr<VkInstance_T>() { return mHandle; };
+        void createDebugMessenger(const VkDebugUtilsMessengerCreateInfoEXT& appInfo,
+            VkDebugUtilsMessengerEXT& debugMessenger) const;
+        void destroyDebugMessenger(VkDebugUtilsMessengerEXT& debugMessenger) const;
     private:
-        std::shared_ptr<VkInstance_T> mHandle;
+        VkInstance mHandle;
 
         std::vector<const char*> getExtensions() const;
-        VkInstance createInstance() const;
     #ifndef NDEBUG
         Layers getLayers() const;
     #endif

@@ -8,10 +8,10 @@ namespace lmar::render
     class DebugMessenger
     {
     public:
-        DebugMessenger(const std::shared_ptr<VkInstance_T>& instance);
+        DebugMessenger(const Instance& instance);
         ~DebugMessenger();
-    private:
-        std::shared_ptr<VkInstance_T> mInstance;
+    private:        
+        const Instance& mInstance;
         VkDebugUtilsMessengerEXT mHandle;
 
         static VkBool32 callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,

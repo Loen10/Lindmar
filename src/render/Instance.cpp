@@ -6,15 +6,54 @@
 
 using namespace lmar::render;
 
-struct InstanceDeleter
-{
-    inline void operator()(VkInstance instance) { vkDestroyInstance(instance, nullptr); };
-};
-
 Instance::Instance()
-    : mHandle{createInstance(), InstanceDeleter{}}
 {
+    VkApplicationInfo appInfo{};
+    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    appInfo.apiVersion = VK_API_VERSION_1_0;
+    appInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 0);
+    appInfo.pApplicationName = "Lindmar";
+    appInfo.engineVersion = VK_MAKE_VERSION(0, 2, 0);
+    appInfo.pEngineName = "Mountain Smithy";
 
+    auto extensions = getExtensions();
+#ifndef NDEBUG
+    auto layers = getLayers();
+#endif
+
+    VkInstanceCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    createInfo.pApplicationInfo = &appInfo;
+    createInfo.enabledExtensionCount = extensions.size();
+    createInfo.ppEnabledExtensionNames = extensions.data();
+#ifndef NDEBUG
+    createInfo.enabledLayerCount = layers.size();
+    createInfo.ppEnabledLayerNames = layers.data();
+#endif
+
+    AssertVulkan(vkCreateInstance(&createInfo, nullptr, &mHandle),
+        "Failed to create a Vulkan instance!");
+}
+
+Instance::~Instance()
+{
+    vkDestroyInstance(mHandle, nullptr);
+}
+
+void Instance::createDebugMessenger(const VkDebugUtilsMessengerCreateInfoEXT& appInfo,
+    VkDebugUtilsMessengerEXT& debugMessenger) const
+{
+    auto func = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(mHandle,"vkCreateDebugUtilsMessengerEXT"));
+    AssertVulkan(func(mHandle, &appInfo, nullptr, &debugMessenger),
+        "Failed to create a Vulkan debug messenger!");
+}
+
+void Instance::destroyDebugMessenger(VkDebugUtilsMessengerEXT& debugMessenger) const
+{
+    auto func = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(mHandle,"vkDestroyDebugUtilsMessengerEXT"));
+    func(mHandle, debugMessenger, nullptr);
 }
 
 std::vector<const char*> Instance::getExtensions() const
@@ -82,35 +121,3 @@ Layers Instance::getLayers() const
     return layers;
 }
 #endif
-
-VkInstance Instance::createInstance() const
-{
-    VkApplicationInfo appInfo{};
-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.apiVersion = VK_API_VERSION_1_0;
-    appInfo.applicationVersion = VK_MAKE_VERSION(0, 0, 0);
-    appInfo.pApplicationName = "Lindmar";
-    appInfo.engineVersion = VK_MAKE_VERSION(0, 2, 0);
-    appInfo.pEngineName = "Mountain Smithy";
-
-    auto extensions = getExtensions();
-#ifndef NDEBUG
-    auto layers = getLayers();
-#endif
-
-    VkInstanceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    createInfo.pApplicationInfo = &appInfo;
-    createInfo.enabledExtensionCount = extensions.size();
-    createInfo.ppEnabledExtensionNames = extensions.data();
-#ifndef NDEBUG
-    createInfo.enabledLayerCount = layers.size();
-    createInfo.ppEnabledLayerNames = layers.data();
-#endif
-
-    VkInstance instance;
-    AssertVulkan(vkCreateInstance(&createInfo, nullptr, &instance),
-        "Failed to create a Vulkan instance!");
-
-    return instance;
-}

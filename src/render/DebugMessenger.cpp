@@ -6,7 +6,7 @@
 
 using namespace lmar::render;
 
-DebugMessenger::DebugMessenger(const std::shared_ptr<VkInstance_T>& instance)
+DebugMessenger::DebugMessenger(const Instance& instance)
     : mInstance{instance}
 {
     VkDebugUtilsMessengerCreateInfoEXT createInfo{};
@@ -18,17 +18,12 @@ DebugMessenger::DebugMessenger(const std::shared_ptr<VkInstance_T>& instance)
         VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
     createInfo.pfnUserCallback = &callback;
 
-    auto func = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
-        vkGetInstanceProcAddr(mInstance.get(), "vkCreateDebugUtilsMessengerEXT"));
-    AssertVulkan(func(mInstance.get(), &createInfo, nullptr, &mHandle),
-        "Failed to create a Vulkan debug messenger!");
+    mInstance.createDebugMessenger(createInfo, mHandle);
 }
 
 DebugMessenger::~DebugMessenger()
 {
-    auto func = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
-        vkGetInstanceProcAddr(mInstance.get(), "vkDestroyDebugUtilsMessengerEXT"));
-    func(mInstance.get(), mHandle, nullptr);
+    mInstance.destroyDebugMessenger(mHandle);
 }
 
 VkBool32 DebugMessenger::callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
