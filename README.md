@@ -1,2 +1,2 @@
 # Lindmar
-3D game with Vulkan
+2D game with Vulkan
