@@ -1,21 +1,25 @@
+#include <cstring>
 
-
+#include "instance.hpp"
+#include "debugMessenger.hpp"
 #include "Renderer.hpp"
 
-using namespace lmar::render;
-
-Renderer::Renderer()
-#ifndef NDEBUG
-    : mDebugMessenger{mInstance}
-#endif
+namespace lmar::render
 {
-    run();
-}
-
-void Renderer::run()
-{
-    while (!mWindow.shouldClose())
+    Renderer::Renderer()
+        : mWindow{window::create()}, mInstance{instance::create()}
+    #ifndef NDEBUG
+        , mDebugMessenger{debugMessenger::create(mInstance)}
+    #endif
     {
-        glfwPollEvents();
+        run();
+    }
+
+    void Renderer::run()
+    {
+        while (!glfwWindowShouldClose(mWindow.get()))
+        {
+            glfwPollEvents();
+        }
     }
 }
